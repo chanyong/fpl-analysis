@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   leagueId: getLeagueIdFromPath(),
   leagueInput: getLeagueIdFromPath(),
   searchText: "",
@@ -84,13 +84,15 @@ function renderPlayerCard(card) {
 }
 
 function buildTrendSvg(managers, gameweeks) {
+  const safeManagers = Array.isArray(managers) ? managers : [];
+  const safeGameweeks = Array.isArray(gameweeks) ? gameweeks : [];
   const chartWidth = 1080;
   const chartHeight = 420;
   const padding = { top: 26, right: 24, bottom: 44, left: 44 };
   const innerWidth = chartWidth - padding.left - padding.right;
   const innerHeight = chartHeight - padding.top - padding.bottom;
-  const maxRank = Math.max(managers.length, 1);
-  const stepX = gameweeks.length > 1 ? innerWidth / (gameweeks.length - 1) : 0;
+  const maxRank = Math.max(safeManagers.length, 1);
+  const stepX = safeGameweeks.length > 1 ? innerWidth / (safeGameweeks.length - 1) : 0;
   const getX = (index) => padding.left + stepX * index;
   const getY = (rank) => maxRank === 1 ? padding.top + innerHeight / 2 : padding.top + ((rank - 1) / (maxRank - 1)) * innerHeight;
 
@@ -101,15 +103,16 @@ function buildTrendSvg(managers, gameweeks) {
     </g>
   `).join("");
 
-  const gwLabels = gameweeks.map((gw, index) => `
+  const gwLabels = safeGameweeks.map((gw, index) => `
     <g>
       <line x1="${getX(index)}" y1="${padding.top}" x2="${getX(index)}" y2="${chartHeight - padding.bottom}" stroke="rgba(140, 115, 84, 0.07)" stroke-dasharray="3 5" />
       <text x="${getX(index)}" y="${chartHeight - 14}" fill="var(--muted)" font-size="10" text-anchor="middle">GW${gw}</text>
     </g>
   `).join("");
 
-  const lines = managers.map((manager) => {
-    const points = manager.trend.filter(Boolean).map((row, index) => ({ x: getX(index), y: getY(row.rank) }));
+  const lines = safeManagers.map((manager) => {
+    const trend = Array.isArray(manager.trend) ? manager.trend : [];
+    const points = trend.filter(Boolean).map((row, index) => ({ x: getX(index), y: getY(row.rank) }));
     if (!points.length) return "";
     const d = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x},${point.y}`).join(" ");
     return `<path d="${d}" fill="none" stroke="${manager.color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"></path>`;
@@ -126,9 +129,12 @@ function buildTrendSvg(managers, gameweeks) {
 
 function renderDashboard() {
   const data = state.data;
-  const managers = getScopedManagers(data.managers);
+  const allManagers = Array.isArray(data.managers) ? data.managers : [];
+  const managers = getScopedManagers(allManagers);
   const selected = getSelectedManager(managers);
-  const captainSummary = data.captainSummary || [];
+  const captainSummary = Array.isArray(data.captainSummary) ? data.captainSummary : [];
+  const trendGameweeks = Array.isArray(data.trend?.gameweeks) ? data.trend.gameweeks : [];
+  const liveBonus = Array.isArray(data.liveBonus) ? data.liveBonus : [];
 
   app.innerHTML = `
     <div class="shell">
@@ -229,7 +235,7 @@ function renderDashboard() {
             <div class="title" style="font-size:18px;">Season rank trend</div>
             <div class="small muted">GW1 to current overall league rank path</div>
           </div>
-          <div class="chart-wrap">${buildTrendSvg(data.managers, data.trend.gameweeks)}</div>
+          <div class="chart-wrap">${buildTrendSvg(allManagers, trendGameweeks)}</div>
         </div>
 
         <div class="bottom-grid">
@@ -237,7 +243,7 @@ function renderDashboard() {
             <div class="title" style="font-size:18px;">Live bonus race</div>
             <div class="small muted" style="margin-top:4px;">Top BPS leaders by live fixture</div>
             <div class="fixture-list" style="margin-top:14px;">
-              ${data.liveBonus.length ? data.liveBonus.map((fixture) => `
+              ${liveBonus.length ? liveBonus.map((fixture) => `
                 <div class="fixture-card">
                   <div class="fixture-top">
                     <div class="strong">${escapeHtml(fixture.label)}</div>

@@ -201,7 +201,7 @@ function buildPlayerCard(pick, liveMap) {
   };
 }
 
-function buildManagerSummary(manager, timelineEntry, liveMap) {
+function buildManagerSummary(manager, timelineEntry, liveMap, trend) {
   const picks = manager.picks?.picks || [];
   const cards = picks.map((pick) => buildPlayerCard(pick, liveMap));
   const starters = cards.filter((card) => card.multiplier > 0);
@@ -227,7 +227,7 @@ function buildManagerSummary(manager, timelineEntry, liveMap) {
     chipLabel: manager.picks?.active_chip ? (CHIP_LABELS[manager.picks.active_chip] || manager.picks.active_chip) : "-",
     startingXI: starters,
     bench,
-    trend: manager.trend
+    trend
   };
 }
 
@@ -335,7 +335,7 @@ async function buildLeagueDashboard(leagueId, options = {}) {
       const filtered = trend.filter(Boolean);
       const latest = filtered.slice(-1)[0] || null;
       const previous = filtered.slice(-2, -1)[0] || null;
-      const summary = buildManagerSummary(manager, latest, liveMap);
+      const summary = buildManagerSummary(manager, latest, liveMap, trend);
 
       return {
         ...summary,

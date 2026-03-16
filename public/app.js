@@ -4,13 +4,13 @@ const state = {
   searchText: "",
   chipOnly: false,
   scope: "all",
-  selectedEntry: null,
   loading: true,
   error: "",
   data: null
 };
 
 const REFRESH_MS = 60000;
+const RECENT_TREND_COUNT = 8;
 const app = document.getElementById("app");
 
 function getLeagueIdFromPath() {
@@ -55,75 +55,208 @@ function getScopedManagers(managers) {
   return searched;
 }
 
-function getSelectedManager(managers) {
-  return managers.find((manager) => manager.entry === state.selectedEntry) || managers[0] || null;
+function buildRecentTrend(managers, gameweeks) {
+  const safeGameweeks = Array.isArray(gameweeks) ? gameweeks : [];
+  const recentGameweeks = safeGameweeks.slice(-RECENT_TREND_COUNT);
+
+  return {
+    gameweeks: recentGameweeks,
+    managers: managers.map((manager) => {
+      const trend = Array.isArray(manager.trend) ? manager.trend : [];
+      const filtered = trend.filter(Boolean);
+      const recent = recentGameweeks.map((gw) => trend.find((row) => row?.gw === gw) || null);
+      const recentFiltered = recent.filter(Boolean);
+      const firstRecentRank = recentFiltered[0]?.rank ?? null;
+      const latestRecentRank = recentFiltered[recentFiltered.length - 1]?.rank ?? null;
+      const seasonFirstRank = filtered[0]?.rank ?? null;
+      const seasonLatestRank = filtered[filtered.length - 1]?.rank ?? null;
+
+      return {
+        entry: manager.entry,
+        entryName: manager.entryName,
+        playerName: manager.playerName,
+        latestRank: manager.latestRank,
+        gwPoints: manager.gwPoints,
+        color: manager.color || "#999999",
+        seasonChange: Number.isFinite(seasonFirstRank) && Number.isFinite(seasonLatestRank) ? seasonFirstRank - seasonLatestRank : null,
+        recentChange: Number.isFinite(firstRecentRank) && Number.isFinite(latestRecentRank) ? firstRecentRank - latestRecentRank : null,
+        recent
+      };
+    })
+  };
 }
 
-function getCardClass(card) {
-  if (card.captain) return "captain";
-  if (card.subtitle.includes("GKP")) return "gkp";
-  if (card.subtitle.includes("DEF")) return "def";
-  if (card.subtitle.includes("MID")) return "mid";
-  return "fwd";
+function formatRankChange(change) {
+  if (!Number.isFinite(change) || change === 0) {
+    return { label: "-", className: "flat" };
+  }
+  if (change > 0) {
+    return { label: `+${change}`, className: "up" };
+  }
+  return { label: `${change}`, className: "down" };
 }
 
-function renderPlayerCard(card) {
+function getKeyInsights(trendManagers) {
+  const leader = [...trendManagers].sort((a, b) => (a.latestRank || 999) - (b.latestRank || 999))[0] || null;
+  const topScorer = [...trendManagers].sort((a, b) => (b.gwPoints || 0) - (a.gwPoints || 0))[0] || null;
+  const riser = [...trendManagers]
+    .filter((manager) => Number.isFinite(manager.recentChange) && manager.recentChange > 0)
+    .sort((a, b) => b.recentChange - a.recentChange)[0] || null;
+  const faller = [...trendManagers]
+    .filter((manager) => Number.isFinite(manager.recentChange) && manager.recentChange < 0)
+    .sort((a, b) => a.recentChange - b.recentChange)[0] || null;
+
+  return [
+    {
+      label: "Current leader",
+      value: leader ? leader.entryName : "-",
+      detail: leader ? `${leader.playerName} · #${leader.latestRank}` : "-",
+      tone: "neutral"
+    },
+    {
+      label: `Best rise in last ${RECENT_TREND_COUNT} GW`,
+      value: riser ? riser.entryName : "-",
+      detail: riser ? `${riser.playerName} · ${formatRankChange(riser.recentChange).label}` : "No positive change",
+      tone: "up"
+    },
+    {
+      label: `Biggest drop in last ${RECENT_TREND_COUNT} GW`,
+      value: faller ? faller.entryName : "-",
+      detail: faller ? `${faller.playerName} · ${formatRankChange(faller.recentChange).label}` : "No negative change",
+      tone: "down"
+    },
+    {
+      label: "Highest live GW points",
+      value: topScorer ? topScorer.entryName : "-",
+      detail: topScorer ? `${topScorer.playerName} · ${topScorer.gwPoints} pts` : "-",
+      tone: "neutral"
+    }
+  ];
+}
+
+function renderTrendCell(row) {
+  if (!row) {
+    return `<td class="trend-cell"><span class="rank-pill empty">-</span></td>`;
+  }
+  return `<td class="trend-cell"><span class="rank-pill">#${escapeHtml(row.rank)}</span></td>`;
+}
+
+function buildTrendChart(trend) {
+  const managers = trend.managers;
+  const gameweeks = trend.gameweeks;
+  const width = 1180;
+  const height = 620;
+  const padding = { top: 28, right: 150, bottom: 54, left: 110 };
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const maxRank = Math.max(managers.length, 1);
+  const stepX = gameweeks.length > 1 ? innerWidth / (gameweeks.length - 1) : 0;
+  const getX = (index) => padding.left + (stepX * index);
+  const getY = (rank) => padding.top + ((rank - 1) / Math.max(maxRank - 1, 1)) * innerHeight;
+
+  const rankLines = Array.from({ length: maxRank }, (_, index) => {
+    const y = getY(index + 1);
+    return `
+      <g>
+        <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
+        <text x="${padding.left - 18}" y="${y + 4}" fill="rgba(206,212,218,0.65)" font-size="12" text-anchor="end">#${index + 1}</text>
+      </g>
+    `;
+  }).join("");
+
+  const gwLines = gameweeks.map((gw, index) => {
+    const x = getX(index);
+    return `
+      <g>
+        <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4 8" />
+        <text x="${x}" y="${height - 16}" fill="rgba(206,212,218,0.72)" font-size="13" text-anchor="middle">GW${gw}</text>
+      </g>
+    `;
+  }).join("");
+
+  const series = managers.map((manager) => {
+    const points = manager.recent
+      .map((row, index) => row ? { x: getX(index), y: getY(row.rank), rank: row.rank } : null)
+      .filter(Boolean);
+
+    if (!points.length) return "";
+
+    const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x},${point.y}`).join(" ");
+    const first = points[0];
+    const last = points[points.length - 1];
+
+    return `
+      <g>
+        <path d="${path}" fill="none" stroke="${manager.color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+        ${points.map((point) => `<circle cx="${point.x}" cy="${point.y}" r="3.5" fill="${manager.color}" />`).join("")}
+        <text x="${first.x - 10}" y="${first.y + 4}" fill="${manager.color}" font-size="12" font-weight="700" text-anchor="end">${escapeHtml(manager.playerName)}</text>
+        <text x="${last.x + 10}" y="${last.y + 4}" fill="${manager.color}" font-size="12" font-weight="700">${escapeHtml(manager.playerName)}</text>
+      </g>
+    `;
+  }).join("");
+
   return `
-    <div class="player-card ${getCardClass(card)}">
-      <div class="player-card-top">
-        <div class="strong">${escapeHtml(card.name)}</div>
-        <div class="points">${escapeHtml(card.points)} pts</div>
+    <div class="trend-chart-panel">
+      <div class="trend-head dark">
+        <div>
+          <div class="title trend-title">Season rank trend</div>
+          <div class="small trend-subtitle">최근 ${gameweeks.length}개 GW 순위를 한 번에 보는 라인 차트</div>
+        </div>
       </div>
-      <div class="small muted">${escapeHtml(card.subtitle)} ${card.minutes > 0 ? `${card.minutes}'` : "0'"}</div>
-      <div class="row-between" style="margin-top:10px;">
-        <span class="badge ${card.played ? "played" : "idle"}">${card.played ? "played" : "not played"}</span>
-        <span class="tiny muted">${card.captain ? "(C)" : card.viceCaptain ? "(VC)" : ""}</span>
+      <div class="chart-wrap dark">
+        <svg viewBox="0 0 ${width} ${height}" width="100%" class="trend-chart-svg">
+          ${rankLines}
+          ${gwLines}
+          ${series}
+        </svg>
       </div>
     </div>
   `;
 }
 
-function buildTrendSvg(managers, gameweeks) {
-  const safeManagers = Array.isArray(managers) ? managers : [];
-  const safeGameweeks = Array.isArray(gameweeks) ? gameweeks : [];
-  const chartWidth = 1080;
-  const chartHeight = 420;
-  const padding = { top: 26, right: 24, bottom: 44, left: 44 };
-  const innerWidth = chartWidth - padding.left - padding.right;
-  const innerHeight = chartHeight - padding.top - padding.bottom;
-  const maxRank = Math.max(safeManagers.length, 1);
-  const stepX = safeGameweeks.length > 1 ? innerWidth / (safeGameweeks.length - 1) : 0;
-  const getX = (index) => padding.left + stepX * index;
-  const getY = (rank) => maxRank === 1 ? padding.top + innerHeight / 2 : padding.top + ((rank - 1) / (maxRank - 1)) * innerHeight;
-
-  const grid = Array.from({ length: Math.min(maxRank, 12) }, (_, index) => `
-    <g>
-      <line x1="${padding.left}" y1="${getY(index + 1)}" x2="${chartWidth - padding.right}" y2="${getY(index + 1)}" stroke="rgba(140, 115, 84, 0.08)" />
-      <text x="18" y="${getY(index + 1) + 4}" fill="var(--muted)" font-size="11">#${index + 1}</text>
-    </g>
-  `).join("");
-
-  const gwLabels = safeGameweeks.map((gw, index) => `
-    <g>
-      <line x1="${getX(index)}" y1="${padding.top}" x2="${getX(index)}" y2="${chartHeight - padding.bottom}" stroke="rgba(140, 115, 84, 0.07)" stroke-dasharray="3 5" />
-      <text x="${getX(index)}" y="${chartHeight - 14}" fill="var(--muted)" font-size="10" text-anchor="middle">GW${gw}</text>
-    </g>
-  `).join("");
-
-  const lines = safeManagers.map((manager) => {
-    const trend = Array.isArray(manager.trend) ? manager.trend : [];
-    const points = trend.filter(Boolean).map((row, index) => ({ x: getX(index), y: getY(row.rank) }));
-    if (!points.length) return "";
-    const d = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x},${point.y}`).join(" ");
-    return `<path d="${d}" fill="none" stroke="${manager.color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"></path>`;
-  }).join("");
+function renderTrendSection(managers, gameweeks) {
+  const trend = buildRecentTrend(managers, gameweeks);
+  const insights = getKeyInsights(trend.managers);
 
   return `
-    <svg viewBox="0 0 ${chartWidth} ${chartHeight}" width="100%" class="chart">
-      ${grid}
-      ${gwLabels}
-      ${lines}
-    </svg>
+    ${buildTrendChart(trend)}
+    <div class="insight-grid">
+      ${insights.map((item) => `
+        <div class="insight-card ${item.tone}">
+          <div class="small muted">${escapeHtml(item.label)}</div>
+          <div class="insight-value">${escapeHtml(item.value)}</div>
+          <div class="small muted">${escapeHtml(item.detail)}</div>
+        </div>
+      `).join("")}
+    </div>
+    <div class="table-wrap">
+      <table class="trend-table">
+        <thead>
+          <tr>
+            <th>Team</th>
+            <th>Manager</th>
+            ${trend.gameweeks.map((gw) => `<th class="num">GW${gw}</th>`).join("")}
+            <th class="num">Recent</th>
+            <th class="num">Season</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${trend.managers.map((manager) => {
+            const recentChange = formatRankChange(manager.recentChange);
+            const seasonChange = formatRankChange(manager.seasonChange);
+            return `
+              <tr>
+                <td class="strong">${escapeHtml(manager.entryName)}</td>
+                <td>${escapeHtml(manager.playerName)}</td>
+                ${manager.recent.map(renderTrendCell).join("")}
+                <td class="num"><span class="change-pill ${recentChange.className}">${escapeHtml(recentChange.label)}</span></td>
+                <td class="num"><span class="change-pill ${seasonChange.className}">${escapeHtml(seasonChange.label)}</span></td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -131,10 +264,8 @@ function renderDashboard() {
   const data = state.data;
   const allManagers = Array.isArray(data.managers) ? data.managers : [];
   const managers = getScopedManagers(allManagers);
-  const selected = getSelectedManager(managers);
   const captainSummary = Array.isArray(data.captainSummary) ? data.captainSummary : [];
   const trendGameweeks = Array.isArray(data.trend?.gameweeks) ? data.trend.gameweeks : [];
-  const liveBonus = Array.isArray(data.liveBonus) ? data.liveBonus : [];
 
   app.innerHTML = `
     <div class="shell">
@@ -204,7 +335,7 @@ function renderDashboard() {
             </thead>
             <tbody>
               ${managers.map((manager) => `
-                <tr data-entry="${manager.entry}" class="${manager.entry === selected?.entry ? "active" : ""}">
+                <tr>
                   <td>${escapeHtml(manager.latestRank)}</td>
                   <td class="strong">${escapeHtml(manager.entryName)}</td>
                   <td>${escapeHtml(manager.playerName)}</td>
@@ -218,61 +349,10 @@ function renderDashboard() {
             </tbody>
           </table>
         </div>
-
-        ${selected ? `
-          <div style="padding:16px 14px 18px;border-top:1px solid rgba(140,115,84,0.08);">
-            <div class="section-label">Starting XI</div>
-            <div class="cards">${selected.startingXI.map(renderPlayerCard).join("")}</div>
-            <div class="section-label" style="margin-top:18px;">Bench</div>
-            <div class="cards">${selected.bench.map(renderPlayerCard).join("")}</div>
-          </div>
-        ` : ""}
       </section>
 
-      <section class="trend-grid" style="margin-top:14px;">
-        <div class="panel" style="padding:16px;">
-          <div style="margin-bottom:10px;">
-            <div class="title" style="font-size:18px;">Season rank trend</div>
-            <div class="small muted">GW1 to current overall league rank path</div>
-          </div>
-          <div class="chart-wrap">${buildTrendSvg(allManagers, trendGameweeks)}</div>
-        </div>
-
-        <div class="bottom-grid">
-          <div class="panel" style="padding:16px;">
-            <div class="title" style="font-size:18px;">Live bonus race</div>
-            <div class="small muted" style="margin-top:4px;">Top BPS leaders by live fixture</div>
-            <div class="fixture-list" style="margin-top:14px;">
-              ${liveBonus.length ? liveBonus.map((fixture) => `
-                <div class="fixture-card">
-                  <div class="fixture-top">
-                    <div class="strong">${escapeHtml(fixture.label)}</div>
-                    <div class="points">${escapeHtml(fixture.score)} / ${escapeHtml(fixture.minutes)}'</div>
-                  </div>
-                  <div class="fixture-list" style="margin-top:8px;gap:6px;">
-                    ${fixture.leaders.map((leader) => `
-                      <div class="row-between small">
-                        <span>${escapeHtml(leader.name)}</span>
-                        <span class="muted">${escapeHtml(leader.value)} BPS</span>
-                      </div>
-                    `).join("")}
-                  </div>
-                </div>
-              `).join("") : `<div class="muted">No live fixture bonus data is available right now.</div>`}
-            </div>
-          </div>
-
-          <div class="panel" style="padding:16px;">
-            <div class="title" style="font-size:18px;">Data strategy</div>
-            <div class="api-list small muted" style="margin-top:12px;gap:8px;">
-              <div>Stored snapshots in /data/leagues/{leagueId}</div>
-              <div>Latest snapshot served immediately</div>
-              <div>Background refresh keeps current GW updated</div>
-              <div>Historical snapshot files keep time-based trail</div>
-              <div>Default league auto-refresh on server</div>
-            </div>
-          </div>
-        </div>
+      <section class="panel trend-shell" style="margin-top:14px;">
+        ${renderTrendSection(managers, trendGameweeks)}
       </section>
     </div>
   `;
@@ -312,7 +392,6 @@ function bindDashboardEvents() {
     }
     state.leagueId = nextLeagueId;
     state.leagueInput = nextLeagueId;
-    state.selectedEntry = null;
     window.history.replaceState({}, "", `/league/${nextLeagueId}`);
     await loadDashboard(true);
   });
@@ -335,13 +414,6 @@ function bindDashboardEvents() {
     state.scope = event.target.value;
     render();
   });
-
-  document.querySelectorAll("tbody tr[data-entry]").forEach((row) => {
-    row.addEventListener("click", () => {
-      state.selectedEntry = Number(row.dataset.entry);
-      render();
-    });
-  });
 }
 
 async function loadDashboard(forceRefresh = false) {
@@ -356,9 +428,6 @@ async function loadDashboard(forceRefresh = false) {
       throw new Error(payload.error || "Failed to load dashboard");
     }
     state.data = payload;
-    if (!state.selectedEntry) {
-      state.selectedEntry = payload.managers[0]?.entry || null;
-    }
   } catch (error) {
     state.error = error.message || "Unknown error";
   } finally {

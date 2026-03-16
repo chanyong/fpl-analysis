@@ -1,0 +1,63 @@
+1. 🥇 공식 FPL API (가장 추천)
+FPL 공식 API는 인증 없이 무료로 사용 가능합니다.
+핵심 엔드포인트:
+
+# 전체 선수 기본 정보
+https://fantasy.premierleague.com/api/bootstrap-static/
+
+# 특정 선수의 게임위크별 상세 데이터
+
+https://fantasy.premierleague.com/api/element-summary/{player_id}/
+
+# 특정 게임위크의 모든 선수 실시간 점수
+https://fantasy.premierleague.com/api/event/{gw_number}/live/
+
+
+# 1. 매니저 전체 히스토리 (매 GW 점수, 칩 사용 내역)
+https://fantasy.premierleague.com/api/entry/{id}/history/
+
+# 2. 특정 GW의 선발/벤치/캡틴/트랜스퍼 내역
+https://fantasy.premierleague.com/api/entry/{id}/event/{gw_number}/picks/
+
+# 3. 선수 이름 매핑 (player_id → 이름)
+https://fantasy.premierleague.com/api/bootstrap-static/
+
+
+예) https://fantasy.premierleague.com/entry/3982289/event/29
+
+
+# 경기 일정
+
+특정 GW만: https://fantasy.premierleague.com/api/fixtures/?event=29
+
+# FDR
+
+공식 FDR 페이지: https://fantasy.premierleague.com/fixtures/fdr
+
+
+# 과거 데이터 아카이브 (매 GW 시점의 스냅샷) 백테스트를 위해서는 **"과거 특정 시점(예: GW10 당시)의 선수 가격과 폼"**이 필요합니다. 이를 위해 매주 데이터를 저장해두는 GitHub 저장소를 활용하는 것이 가장 효율적입니다. ( vaastav/Fantasy-Premier-League (GitHub))
+
+https://github.com/vaastav/Fantasy-Premier-League
+
+
+
+나의 gw29 의 점수 링크가 아래와 같을때, 매주 획득 점수, 매주 Transfer 한 내역, bench booster/Triple Captain/Wildcard/Free hit 사용내역, 선발선수, Captain 선택 내역을 크롤링 하는 방법은?
+
+
+# 추천 파생지표:
+
+GW별 벤치 포인트 손실 = 벤치 최고 조합 - 실제 벤치 반영
+
+캡틴 손실 = 그 주 내 스쿼드 최고 득점자 주장 시 점수 - 실제 주장 점수
+
+이적 순이익 = in 선수 점수 - out 선수 점수 - hit 비용
+
+칩 ROI = 칩 사용 실제점수 - 무칩 기준 대체 시나리오 점수
+
+롤링 성과 = 최근 3/5/8GW 평균
+
+포지션별 의사결정 점수 = GK/DEF/MID/FWD별 초과 성과
+
+예산 효율 = 1.0m당 획득 점수
+
+구조 효율 = 프리미엄 집중형 vs 밸런스형 성과

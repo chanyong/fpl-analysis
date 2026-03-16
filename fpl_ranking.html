@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FPL League Trend Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+  :root {
+    --bg: #08141f;
+    --panel: rgba(10, 25, 39, 0.86);
+    --text: #eef6fb;
+    --muted: #97b4c8;
+    --line: rgba(151, 180, 200, 0.18);
+    --accent: #4fd1c5;
+    --accent-2: #ffd166;
+    --good: #47d16c;
+    --bad: #ff6b6b;
+    --shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--text);
+    font-family: "Segoe UI", "Apple SD Gothic Neo", sans-serif;
+    background:
+      radial-gradient(circle at top left, rgba(79, 209, 197, 0.15), transparent 34%),
+      radial-gradient(circle at top right, rgba(255, 209, 102, 0.14), transparent 28%),
+      linear-gradient(180deg, #09131d 0%, #08141f 45%, #0b1721 100%);
+  }
+
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useEffect, useState } = React;
+
+const DEFAULT_LEAGUE_INPUT = "822501";
+const DEFAULT_API_BASE = "https://fantasy.premierleague.com/api";
+const CHART_COLORS = [
+  "#4fd1c5", "#ffd166", "#ff6b6b", "#7f5af0", "#2cb67d", "#ff9f1c", "#73c2fb", "#ff99c8",
+  "#c77dff", "#f9844a", "#9ef01a", "#00bbf9", "#f15bb5", "#aacc00", "#fb5607", "#3a86ff",
+  "#43aa8b", "#f8961e", "#577590", "#90be6d", "#f94144", "#277da1", "#8338ec", "#8ecae6"
+];
+
+function parseLeagueId(value) {
+  if (!value) return null;
+  const trimmed = String(value).trim();
+  const urlMatch = trimmed.match(/\/leagues\/(\d+)\//i);
+  if (urlMatch) return urlMatch[1];
+  return /^\d+$/.test(trimmed) ? trimmed : null;
+}
+
+function buildApiUrl(apiBase, path, query = {}) {
+  const url = new URL(path, apiBase.endsWith("/") ? apiBase : apiBase + "/");
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, value);
+    }
+  });
+  return url.toString();
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!response.ok) {
+    throw new Error("Request failed: " + response.status + " " + response.statusText);
+  }
+  return response.json();
+}
+
+async function fetchAllLeagueStandings(apiBase, leagueId) {
+  let page = 1;
+  let hasNext = true;
+  let leagueMeta = null;
+  const results = [];
+
+  while (hasNext) {
+    const payload = await fetchJson(
+      buildApiUrl(apiBase, `leagues-classic/${leagueId}/standings/`, { page_standings: page })
+    );
+    leagueMeta = payload.league || leagueMeta;
+    const standings = payload.standings || {};
+    results.push(...(standings.results || []));
+    hasNext = Boolean(standings.has_next);
+    page += 1;
+  }
+
+  return { league: leagueMeta, results };
+}
+
+function getCurrentEvent(bootstrap) {
+  const events = bootstrap.events || [];
+  return events.find((event) => event.is_current) || events.find((event) => event.is_next) || null;
+}
+
+function getTrackedGameweeks(bootstrap, histories) {
+  const bootstrapEvents = (bootstrap.events || [])
+    .filter((event) => event.finished || event.is_current)
+    .map((event) => event.id);
+  const historyEvents = new Set();
+
+  histories.forEach((history) => {
+    (history.current || []).forEach((row) => {
+      if (row.event) historyEvents.add(row.event);
+    });
+  });
+
+  return Array.from(new Set([...bootstrapEvents, ...historyEvents])).sort((a, b) => a - b);
+}
+
+function createManagers(standingsResults, histories) {
+  return standingsResults.map((row, index) => ({
+    entry: row.entry,
+    playerName: row.player_name || "Unknown Manager",
+    entryName: row.entry_name || "Unnamed Team",
+    history: histories[index] || { current: [], chips: [] }
+  }));
+}
+
+function buildTrendData(bootstrap, managers) {
+  const gameweeks = getTrackedGameweeks(bootstrap, managers.map((manager) => manager.history));
+  const timelineByManager = {};
+
+  managers.forEach((manager) => {
+    const byGw = {};
+    (manager.history.current || []).forEach((row) => {
+      byGw[row.event] = row;
+    });
+    timelineByManager[manager.entry] = gameweeks.map((gw) => {
+      const row = byGw[gw];
+      return row ? {
+        gw,
+        totalPoints: row.total_points,
+        eventPoints: row.points,
+        rank: null
+      } : null;
+    });
+  });
+
+  gameweeks.forEach((gw, index) => {
+    const rows = managers
+      .map((manager) => {
+        const row = timelineByManager[manager.entry][index];
+        return row ? { entry: manager.entry, totalPoints: row.totalPoints } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.totalPoints - a.totalPoints);
+
+    let rank = 1;
+    rows.forEach((row, rowIndex) => {
+      if (rowIndex > 0 && row.totalPoints < rows[rowIndex - 1].totalPoints) {
+        rank = rowIndex + 1;
+      }
+      timelineByManager[row.entry][index].rank = rank;
+    });
+  });
+
+  return { gameweeks, timelineByManager };
+}
+
+function groupByValueDesc(items) {
+  const groups = [];
+  items.forEach((item) => {
+    const match = groups.find((group) => group.value === item.value);
+    if (match) {
+      match.items.push(item);
+    } else {
+      groups.push({ value: item.value, items: [item] });
+    }
+  });
+  return groups.sort((a, b) => b.value - a.value);
+}
+
+function computeProjectedBonus(players) {
+  const groups = groupByValueDesc(players);
+  if (!groups.length) return [];
+
+  const awarded = [];
+  groups[0].items.forEach((item) => awarded.push({ ...item, bonus: 3 }));
+  if (groups[0].items.length >= 3 || groups.length === 1) return awarded;
+
+  if (groups[0].items.length === 2) {
+    groups[1].items.forEach((item) => awarded.push({ ...item, bonus: 1 }));
+    return awarded;
+  }
+
+  groups[1].items.forEach((item) => awarded.push({ ...item, bonus: 2 }));
+  if (groups[1].items.length >= 2 || groups.length === 2) return awarded;
+
+  groups[2].items.forEach((item) => awarded.push({ ...item, bonus: 1 }));
+  return awarded;
+}
+
+function buildLiveBonus(fixtures, bootstrap) {
+  const teams = Object.fromEntries((bootstrap.teams || []).map((team) => [team.id, team.name]));
+  const playerNames = Object.fromEntries((bootstrap.elements || []).map((player) => [player.id, player.web_name]));
+
+  return (fixtures || [])
+    .filter((fixture) => fixture.started && !fixture.finished)
+    .map((fixture) => {
+      const bpsStat = (fixture.stats || []).find((stat) => stat.identifier === "bps");
+      const players = [
+        ...((bpsStat?.h || []).map((item) => ({ element: item.element, value: item.value }))),
+        ...((bpsStat?.a || []).map((item) => ({ element: item.element, value: item.value })))
+      ].sort((a, b) => b.value - a.value);
+
+      return {
+        id: fixture.id,
+        label: `${teams[fixture.team_h] || "Home"} vs ${teams[fixture.team_a] || "Away"}`,
+        score: `${fixture.team_h_score ?? 0} - ${fixture.team_a_score ?? 0}`,
+        minutes: fixture.minutes || 0,
+        projectedBonus: computeProjectedBonus(players).map((player) => ({
+          ...player,
+          name: playerNames[player.element] || ("Player #" + player.element)
+        }))
+      };
+    });
+}
+
+function formatTrend(previous, current) {
+  if (!previous || !current) return "-";
+  const diff = previous.rank - current.rank;
+  if (diff > 0) return `up ${diff}`;
+  if (diff < 0) return `down ${Math.abs(diff)}`;
+  return "same";
+}
+
+function LoadingPanel({ text }) {
+  return (
+    <div style={{
+      padding: "32px",
+      borderRadius: "24px",
+      background: "var(--panel)",
+      border: "1px solid var(--line)",
+      boxShadow: "var(--shadow)",
+      textAlign: "center",
+      color: "var(--muted)"
+    }}>
+      {text}
+    </div>
+  );
+}
+
+function ErrorPanel({ message }) {
+  return (
+    <div style={{
+      padding: "24px",
+      borderRadius: "22px",
+      background: "rgba(116, 16, 16, 0.35)",
+      border: "1px solid rgba(255, 107, 107, 0.45)",
+      color: "#ffd7d7",
+      lineHeight: 1.6
+    }}>
+      <strong style={{ display: "block", marginBottom: "8px" }}>Data load failed</strong>
+      <div>{message}</div>
+      <div style={{ marginTop: "8px", fontSize: "14px", color: "#ffb8b8" }}>
+        If direct browser fetch is blocked by CORS, deploy the page behind a small proxy that forwards requests to fantasy.premierleague.com/api.
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [leagueInput, setLeagueInput] = useState(DEFAULT_LEAGUE_INPUT);
+  const [activeLeagueId, setActiveLeagueId] = useState(DEFAULT_LEAGUE_INPUT);
+  const [apiBaseInput, setApiBaseInput] = useState(DEFAULT_API_BASE);
+  const [apiBase, setApiBase] = useState(DEFAULT_API_BASE);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [data, setData] = useState(null);
+  const [hoveredEntry, setHoveredEntry] = useState(null);
+
+  useEffect(() => {
+    loadLeague(activeLeagueId);
+  }, [activeLeagueId, apiBase, reloadKey]);
+
+  async function loadLeague(leagueId) {
+    setLoading(true);
+    setError("");
+
+    try {
+      const bootstrap = await fetchJson(buildApiUrl(apiBase, "bootstrap-static/"));
+      const standingsPayload = await fetchAllLeagueStandings(apiBase, leagueId);
+      const histories = await Promise.all(
+        standingsPayload.results.map((row) => fetchJson(buildApiUrl(apiBase, `entry/${row.entry}/history/`)))
+      );
+
+      const managers = createManagers(standingsPayload.results, histories);
+      const trendData = buildTrendData(bootstrap, managers);
+      const cards = managers.map((manager, index) => {
+        const trend = trendData.timelineByManager[manager.entry] || [];
+        const filtered = trend.filter(Boolean);
+        return {
+          ...manager,
+          color: CHART_COLORS[index % CHART_COLORS.length],
+          trend,
+          latest: filtered.slice(-1)[0] || null,
+          previous: filtered.slice(-2, -1)[0] || null
+        };
+      }).sort((a, b) => (a.latest?.rank || 999) - (b.latest?.rank || 999));
+
+      const currentEvent = getCurrentEvent(bootstrap);
+      let liveBonus = [];
+      if (currentEvent) {
+        const fixtures = await fetchJson(buildApiUrl(apiBase, "fixtures/", { event: currentEvent.id }));
+        liveBonus = buildLiveBonus(fixtures, bootstrap);
+      }
+
+      setData({
+        league: standingsPayload.league,
+        currentEvent,
+        gameweeks: trendData.gameweeks,
+        managers: cards,
+        liveBonus
+      });
+    } catch (err) {
+      setData(null);
+      setError(err.message || "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    const leagueId = parseLeagueId(leagueInput);
+    if (!leagueId) {
+      setError("League ID or league URL format is invalid.");
+      return;
+    }
+    setApiBase(apiBaseInput.trim() || DEFAULT_API_BASE);
+    setActiveLeagueId(leagueId);
+    setReloadKey((value) => value + 1);
+  }
+
+  const managers = data?.managers || [];
+  const gameweeks = data?.gameweeks || [];
+  const maxRank = Math.max(managers.length, 1);
+  const chartWidth = 1120;
+  const chartHeight = 720;
+  const padding = { top: 68, right: 220, bottom: 60, left: 160 };
+  const innerWidth = chartWidth - padding.left - padding.right;
+  const innerHeight = chartHeight - padding.top - padding.bottom;
+  const stepX = gameweeks.length > 1 ? innerWidth / (gameweeks.length - 1) : 0;
+  const labelEvery = gameweeks.length > 24 ? 3 : 1;
+
+  function getX(index) {
+    return padding.left + stepX * index;
+  }
+
+  function getY(rank) {
+    if (maxRank === 1) return padding.top + innerHeight / 2;
+    return padding.top + ((rank - 1) / (maxRank - 1)) * innerHeight;
+  }
+
+  return (
+    <div style={{ maxWidth: "1400px", margin: "0 auto", padding: "32px 18px 56px" }}>
+      <div style={{ marginBottom: "22px" }}>
+        <div style={{ fontSize: "12px", letterSpacing: "0.18em", textTransform: "uppercase", color: "var(--accent)" }}>
+          Fantasy Premier League
+        </div>
+        <h1 style={{ margin: "10px 0 8px", fontSize: "40px", lineHeight: 1.05, letterSpacing: "-0.04em" }}>
+          League ranking trend from GW1 to now
+        </h1>
+        <p style={{ margin: 0, maxWidth: "900px", color: "var(--muted)", lineHeight: 1.7 }}>
+          Enter a classic league ID or league URL. This page loads league standings, each manager&apos;s season history, GW-by-GW rank changes, and current bonus projections.
+        </p>
+      </div>
+
+      <form onSubmit={handleSubmit} style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+        gap: "12px",
+        padding: "18px",
+        borderRadius: "24px",
+        background: "var(--panel)",
+        border: "1px solid var(--line)",
+        boxShadow: "var(--shadow)",
+        marginBottom: "24px"
+      }}>
+        <label style={{ display: "grid", gap: "6px" }}>
+          <span style={{ color: "var(--muted)", fontSize: "13px" }}>League ID or URL</span>
+          <input
+            value={leagueInput}
+            onChange={(event) => setLeagueInput(event.target.value)}
+            placeholder="822501 or full standings URL"
+            style={{
+              width: "100%",
+              padding: "14px 16px",
+              borderRadius: "14px",
+              border: "1px solid var(--line)",
+              background: "rgba(8, 20, 31, 0.9)",
+              color: "var(--text)",
+              fontSize: "15px"
+            }}
+          />
+        </label>
+
+        <label style={{ display: "grid", gap: "6px" }}>
+          <span style={{ color: "var(--muted)", fontSize: "13px" }}>API base</span>
+          <input
+            value={apiBaseInput}
+            onChange={(event) => setApiBaseInput(event.target.value)}
+            placeholder="https://fantasy.premierleague.com/api"
+            style={{
+              width: "100%",
+              padding: "14px 16px",
+              borderRadius: "14px",
+              border: "1px solid var(--line)",
+              background: "rgba(8, 20, 31, 0.9)",
+              color: "var(--text)",
+              fontSize: "15px"
+            }}
+          />
+        </label>
+
+        <button
+          type="submit"
+          style={{
+            alignSelf: "end",
+            padding: "14px 18px",
+            borderRadius: "14px",
+            border: 0,
+            background: "linear-gradient(135deg, var(--accent), #38b2ac)",
+            color: "#08202b",
+            fontWeight: "800",
+            fontSize: "15px",
+            cursor: "pointer"
+          }}
+        >
+          Load league
+        </button>
+      </form>
+
+      {loading && <LoadingPanel text="Loading league standings, manager history, and live bonus data..." />}
+      {!loading && error && <ErrorPanel message={error} />}
+
+      {!loading && !error && data && (
+        <div style={{ display: "grid", gap: "24px" }}>
+          <section style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: "14px"
+          }}>
+            <div style={{ padding: "18px", borderRadius: "22px", background: "var(--panel)", border: "1px solid var(--line)" }}>
+              <div style={{ color: "var(--muted)", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.1em" }}>League</div>
+              <div style={{ marginTop: "8px", fontSize: "24px", fontWeight: "700" }}>{data.league?.name || ("League " + activeLeagueId)}</div>
+            </div>
+            <div style={{ padding: "18px", borderRadius: "22px", background: "var(--panel)", border: "1px solid var(--line)" }}>
+              <div style={{ color: "var(--muted)", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.1em" }}>Managers</div>
+              <div style={{ marginTop: "8px", fontSize: "24px", fontWeight: "700" }}>{managers.length}</div>
+            </div>
+            <div style={{ padding: "18px", borderRadius: "22px", background: "var(--panel)", border: "1px solid var(--line)" }}>
+              <div style={{ color: "var(--muted)", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.1em" }}>Gameweeks tracked</div>
+              <div style={{ marginTop: "8px", fontSize: "24px", fontWeight: "700" }}>
+                {gameweeks.length ? `GW${gameweeks[0]} - GW${gameweeks[gameweeks.length - 1]}` : "No data"}
+              </div>
+            </div>
+            <div style={{ padding: "18px", borderRadius: "22px", background: "var(--panel)", border: "1px solid var(--line)" }}>
+              <div style={{ color: "var(--muted)", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.1em" }}>Current event</div>
+              <div style={{ marginTop: "8px", fontSize: "24px", fontWeight: "700" }}>
+                {data.currentEvent ? `GW${data.currentEvent.id}` : "Off-season"}
+              </div>
+            </div>
+          </section>
+
+          <section style={{
+            padding: "22px",
+            borderRadius: "28px",
+            background: "var(--panel)",
+            border: "1px solid var(--line)",
+            boxShadow: "var(--shadow)",
+            overflow: "hidden"
+          }}>
+            <div style={{ marginBottom: "14px" }}>
+              <h2 style={{ margin: 0, fontSize: "24px" }}>Bump chart</h2>
+              <p style={{ margin: "6px 0 0", color: "var(--muted)", lineHeight: 1.6 }}>
+                Hover a manager line to focus the full rank path and cumulative points after each gameweek.
+              </p>
+            </div>
+
+            <div style={{ overflowX: "auto", paddingBottom: "8px" }}>
+              <svg
+                viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                width="100%"
+                style={{ minWidth: "960px", borderRadius: "18px", background: "linear-gradient(180deg, rgba(16, 38, 59, 0.88), rgba(8, 20, 31, 0.95))" }}
+                onMouseLeave={() => setHoveredEntry(null)}
+              >
+                {Array.from({ length: maxRank }, (_, index) => (
+                  <g key={`rank-${index + 1}`}>
+                    <line
+                      x1={padding.left}
+                      y1={getY(index + 1)}
+                      x2={chartWidth - padding.right}
+                      y2={getY(index + 1)}
+                      stroke="rgba(151, 180, 200, 0.13)"
+                      strokeWidth="1"
+                    />
+                    <text x={padding.left - 18} y={getY(index + 1) + 4} fill="rgba(151, 180, 200, 0.75)" fontSize="12" textAnchor="end">
+                      #{index + 1}
+                    </text>
+                  </g>
+                ))}
+
+                {gameweeks.map((gw, index) => (
+                  <g key={`gw-${gw}`}>
+                    <line
+                      x1={getX(index)}
+                      y1={padding.top - 10}
+                      x2={getX(index)}
+                      y2={chartHeight - padding.bottom + 10}
+                      stroke="rgba(151, 180, 200, 0.11)"
+                      strokeWidth="1"
+                      strokeDasharray="4 5"
+                    />
+                    {(index % labelEvery === 0 || index === gameweeks.length - 1) && (
+                      <text x={getX(index)} y={chartHeight - padding.bottom + 28} fill="rgba(238, 246, 251, 0.82)" fontSize="12" fontWeight="700" textAnchor="middle">
+                        {`GW${gw}`}
+                      </text>
+                    )}
+                  </g>
+                ))}
+
+                {managers.map((manager) => {
+                  const points = manager.trend
+                    .map((row, index) => row ? {
+                      x: getX(index),
+                      y: getY(row.rank),
+                      gw: row.gw,
+                      rank: row.rank,
+                      totalPoints: row.totalPoints
+                    } : null)
+                    .filter(Boolean);
+
+                  if (!points.length) return null;
+
+                  const active = hoveredEntry === null || hoveredEntry === manager.entry;
+                  const opacity = active ? 1 : 0.1;
+                  const strokeWidth = hoveredEntry === manager.entry ? 4.2 : 2;
+                  const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x},${point.y}`).join(" ");
+                  const first = points[0];
+                  const last = points[points.length - 1];
+
+                  return (
+                    <g key={manager.entry}>
+                      <path
+                        d={path}
+                        fill="none"
+                        stroke={manager.color}
+                        strokeWidth={strokeWidth}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        opacity={opacity}
+                        style={{ transition: "opacity 0.2s, stroke-width 0.2s", cursor: "pointer" }}
+                        onMouseEnter={() => setHoveredEntry(manager.entry)}
+                      />
+
+                      {points.map((point) => (
+                        <g key={`${manager.entry}-${point.gw}`}>
+                          <circle
+                            cx={point.x}
+                            cy={point.y}
+                            r={hoveredEntry === manager.entry ? 5.8 : 3.2}
+                            fill={manager.color}
+                            stroke="#08141f"
+                            strokeWidth="2"
+                            opacity={opacity}
+                            style={{ cursor: "pointer" }}
+                            onMouseEnter={() => setHoveredEntry(manager.entry)}
+                          />
+                          {hoveredEntry === manager.entry && (
+                            <text x={point.x} y={point.y - 13} fill={manager.color} fontSize="10" fontWeight="800" textAnchor="middle">
+                              {`${point.totalPoints} pts`}
+                            </text>
+                          )}
+                        </g>
+                      ))}
+
+                      <text
+                        x={first.x - 10}
+                        y={first.y + 4}
+                        fill={manager.color}
+                        fontSize="11"
+                        fontWeight={hoveredEntry === manager.entry ? "800" : "600"}
+                        textAnchor="end"
+                        opacity={opacity}
+                      >
+                        {manager.playerName}
+                      </text>
+                      <text
+                        x={last.x + 10}
+                        y={last.y + 4}
+                        fill={manager.color}
+                        fontSize="11"
+                        fontWeight={hoveredEntry === manager.entry ? "800" : "600"}
+                        textAnchor="start"
+                        opacity={opacity}
+                      >
+                        {manager.playerName}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+          </section>
+
+          <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px" }}>
+            <div style={{
+              padding: "22px",
+              borderRadius: "28px",
+              background: "var(--panel)",
+              border: "1px solid var(--line)",
+              boxShadow: "var(--shadow)",
+              overflowX: "auto"
+            }}>
+              <div style={{ marginBottom: "12px" }}>
+                <h2 style={{ margin: 0, fontSize: "22px" }}>Latest standings</h2>
+                <p style={{ margin: "6px 0 0", color: "var(--muted)", lineHeight: 1.6 }}>
+                  Current cumulative totals and rank movement versus the previous tracked gameweek.
+                </p>
+              </div>
+
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "720px" }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--line)", color: "var(--muted)", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                    <th style={{ textAlign: "left", padding: "12px 10px" }}>Rank</th>
+                    <th style={{ textAlign: "left", padding: "12px 10px" }}>Manager</th>
+                    <th style={{ textAlign: "left", padding: "12px 10px" }}>Team</th>
+                    <th style={{ textAlign: "right", padding: "12px 10px" }}>Total</th>
+                    <th style={{ textAlign: "right", padding: "12px 10px" }}>GW pts</th>
+                    <th style={{ textAlign: "right", padding: "12px 10px" }}>Trend</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {managers.map((manager) => {
+                    const trendText = formatTrend(manager.previous, manager.latest);
+                    const trendColor = trendText.startsWith("up")
+                      ? "var(--good)"
+                      : trendText.startsWith("down")
+                        ? "var(--bad)"
+                        : "var(--muted)";
+
+                    return (
+                      <tr
+                        key={manager.entry}
+                        style={{
+                          borderBottom: "1px solid rgba(151, 180, 200, 0.08)",
+                          background: hoveredEntry === manager.entry ? "rgba(79, 209, 197, 0.08)" : "transparent"
+                        }}
+                        onMouseEnter={() => setHoveredEntry(manager.entry)}
+                        onMouseLeave={() => setHoveredEntry(null)}
+                      >
+                        <td style={{ padding: "12px 10px", fontWeight: "800" }}>#{manager.latest?.rank || "-"}</td>
+                        <td style={{ padding: "12px 10px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <span style={{ width: "10px", height: "10px", borderRadius: "999px", background: manager.color, display: "inline-block" }} />
+                            <span style={{ fontWeight: "700" }}>{manager.playerName}</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: "12px 10px", color: "var(--muted)" }}>{manager.entryName}</td>
+                        <td style={{ padding: "12px 10px", textAlign: "right", fontWeight: "700" }}>{manager.latest?.totalPoints ?? 0}</td>
+                        <td style={{ padding: "12px 10px", textAlign: "right" }}>{manager.latest?.eventPoints ?? 0}</td>
+                        <td style={{ padding: "12px 10px", textAlign: "right", color: trendColor, fontWeight: "700" }}>{trendText}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: "grid", gap: "24px" }}>
+              <div style={{
+                padding: "22px",
+                borderRadius: "28px",
+                background: "var(--panel)",
+                border: "1px solid var(--line)",
+                boxShadow: "var(--shadow)"
+              }}>
+                <h2 style={{ margin: 0, fontSize: "22px" }}>Live bonus projection</h2>
+                <p style={{ margin: "6px 0 14px", color: "var(--muted)", lineHeight: 1.6 }}>
+                  Projected bonus from current fixture BPS. This is live and can still change.
+                </p>
+
+                {!data.liveBonus.length && (
+                  <div style={{ color: "var(--muted)", lineHeight: 1.7 }}>
+                    No live fixtures with BPS data are available right now.
+                  </div>
+                )}
+
+                <div style={{ display: "grid", gap: "12px" }}>
+                  {data.liveBonus.map((fixture) => (
+                    <div key={fixture.id} style={{
+                      padding: "14px",
+                      borderRadius: "18px",
+                      background: "rgba(16, 38, 59, 0.72)",
+                      border: "1px solid rgba(151, 180, 200, 0.12)"
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "baseline", marginBottom: "10px" }}>
+                        <div style={{ fontWeight: "700" }}>{fixture.label}</div>
+                        <div style={{ color: "var(--accent-2)", fontWeight: "800" }}>
+                          {fixture.score} / {fixture.minutes}'
+                        </div>
+                      </div>
+
+                      {!fixture.projectedBonus.length && (
+                        <div style={{ color: "var(--muted)", fontSize: "14px" }}>BPS data not available yet.</div>
+                      )}
+
+                      <div style={{ display: "grid", gap: "8px" }}>
+                        {fixture.projectedBonus.map((player) => (
+                          <div key={`${fixture.id}-${player.element}-${player.bonus}`} style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: "10px",
+                            fontSize: "14px"
+                          }}>
+                            <span>{player.name}</span>
+                            <span style={{ color: "var(--accent-2)", fontWeight: "700" }}>
+                              {player.value} BPS / +{player.bonus}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{
+                padding: "22px",
+                borderRadius: "28px",
+                background: "var(--panel)",
+                border: "1px solid var(--line)",
+                boxShadow: "var(--shadow)"
+              }}>
+                <h2 style={{ margin: 0, fontSize: "22px" }}>API sources</h2>
+                <div style={{ marginTop: "12px", display: "grid", gap: "9px", color: "var(--muted)", lineHeight: 1.6, fontSize: "14px" }}>
+                  <div>{"/api/leagues-classic/{leagueId}/standings/"}</div>
+                  <div>{"/api/entry/{entryId}/history/"}</div>
+                  <div>/api/bootstrap-static/</div>
+                  <div>{"/api/fixtures/?event={gw}"}</div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

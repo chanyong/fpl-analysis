@@ -139,25 +139,6 @@ function getKeyInsights(trendManagers) {
   ];
 }
 
-function renderCaptainStrip(captainSummary) {
-  return `
-    <section class="panel captain-strip">
-      <div class="section-kicker">Most captained</div>
-      <div class="captain-list">
-        ${captainSummary.map((captain, index) => `
-          <div class="captain-chip ${index === 0 ? "primary" : ""}">
-            <span class="captain-dot">${escapeHtml(captain.name.slice(0, 2).toUpperCase())}</span>
-            <div>
-              <div class="captain-name">${escapeHtml(captain.name)}</div>
-              <div class="captain-meta">${escapeHtml(captain.pct)}%</div>
-            </div>
-          </div>
-        `).join("")}
-      </div>
-    </section>
-  `;
-}
-
 function renderMovementCards(trendManagers) {
   return `
     <section class="movement-grid">
@@ -305,7 +286,6 @@ function renderDashboard() {
   const data = state.data;
   const allManagers = Array.isArray(data.managers) ? data.managers : [];
   const managers = getScopedManagers(allManagers);
-  const captainSummary = Array.isArray(data.captainSummary) ? data.captainSummary : [];
   const trendGameweeks = Array.isArray(data.trend?.gameweeks) ? data.trend.gameweeks : [];
 
   app.innerHTML = `
@@ -354,8 +334,6 @@ function renderDashboard() {
           </div>
         </form>
       </section>
-
-      ${renderCaptainStrip(captainSummary)}
 
       <section class="panel trend-shell">
         ${renderTrendSection(managers, trendGameweeks)}

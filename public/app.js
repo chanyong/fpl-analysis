@@ -1,4 +1,4 @@
-const state = {
+﻿const state = {
   leagueId: getLeagueIdFromPath(),
   leagueInput: getLeagueIdFromPath(),
   searchText: "",
@@ -11,6 +11,7 @@ const state = {
 
 const REFRESH_MS = 60000;
 const RECENT_TREND_COUNT = 8;
+const MAX_CHART_SERIES = 10;
 const app = document.getElementById("app");
 
 function getLeagueIdFromPath() {
@@ -29,17 +30,17 @@ function escapeHtml(value) {
 
 function formatLocalTime(value) {
   if (!value) return "-";
-  return new Date(value).toLocaleString();
+  return new Date(value).toLocaleString("ko-KR");
 }
 
 function formatAge(ms) {
   if (!Number.isFinite(ms)) return "-";
   const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) return `${seconds}초`;
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60) return `${minutes}분`;
   const hours = Math.round(minutes / 60);
-  return `${hours}h`;
+  return `${hours}시간`;
 }
 
 function getScopedManagers(managers) {
@@ -70,6 +71,7 @@ function buildRecentTrend(managers, gameweeks) {
       const latestRecentRank = recentFiltered[recentFiltered.length - 1]?.rank ?? null;
       const seasonFirstRank = filtered[0]?.rank ?? null;
       const seasonLatestRank = filtered[filtered.length - 1]?.rank ?? null;
+      const bestRank = filtered.reduce((best, row) => row && (!best || row.rank < best) ? row.rank : best, null);
 
       return {
         entry: manager.entry,
@@ -77,7 +79,10 @@ function buildRecentTrend(managers, gameweeks) {
         playerName: manager.playerName,
         latestRank: manager.latestRank,
         gwPoints: manager.gwPoints,
+        totalPoints: manager.totalPoints,
+        captainName: manager.captainName,
         color: manager.color || "#999999",
+        bestRank,
         seasonChange: Number.isFinite(seasonFirstRank) && Number.isFinite(seasonLatestRank) ? seasonFirstRank - seasonLatestRank : null,
         recentChange: Number.isFinite(firstRecentRank) && Number.isFinite(latestRecentRank) ? firstRecentRank - latestRecentRank : null,
         recent
@@ -88,12 +93,12 @@ function buildRecentTrend(managers, gameweeks) {
 
 function formatRankChange(change) {
   if (!Number.isFinite(change) || change === 0) {
-    return { label: "-", className: "flat" };
+    return { label: "-", className: "flat", text: "변화 없음" };
   }
   if (change > 0) {
-    return { label: `+${change}`, className: "up" };
+    return { label: `+${change}`, className: "up", text: `${change}계단 상승` };
   }
-  return { label: `${change}`, className: "down" };
+  return { label: `${change}`, className: "down", text: `${Math.abs(change)}계단 하락` };
 }
 
 function getKeyInsights(trendManagers) {
@@ -108,48 +113,104 @@ function getKeyInsights(trendManagers) {
 
   return [
     {
-      label: "Current leader",
+      label: "현재 1위",
       value: leader ? leader.entryName : "-",
-      detail: leader ? `${leader.playerName} �� #${leader.latestRank}` : "-",
+      detail: leader ? `${leader.playerName} · 현재 #${leader.latestRank}` : "-",
       tone: "neutral"
     },
     {
-      label: `Best rise in last ${RECENT_TREND_COUNT} GW`,
+      label: `최근 ${RECENT_TREND_COUNT}GW 최고 상승`,
       value: riser ? riser.entryName : "-",
-      detail: riser ? `${riser.playerName} �� ${formatRankChange(riser.recentChange).label}` : "No positive change",
+      detail: riser ? `${riser.playerName} · ${formatRankChange(riser.recentChange).text}` : "상승 팀 없음",
       tone: "up"
     },
     {
-      label: `Biggest drop in last ${RECENT_TREND_COUNT} GW`,
+      label: `최근 ${RECENT_TREND_COUNT}GW 최대 하락`,
       value: faller ? faller.entryName : "-",
-      detail: faller ? `${faller.playerName} �� ${formatRankChange(faller.recentChange).label}` : "No negative change",
+      detail: faller ? `${faller.playerName} · ${formatRankChange(faller.recentChange).text}` : "하락 팀 없음",
       tone: "down"
     },
     {
-      label: "Highest live GW points",
+      label: "이번 GW 최고 득점",
       value: topScorer ? topScorer.entryName : "-",
-      detail: topScorer ? `${topScorer.playerName} �� ${topScorer.gwPoints} pts` : "-",
+      detail: topScorer ? `${topScorer.playerName} · ${topScorer.gwPoints}점` : "-",
       tone: "neutral"
     }
   ];
 }
 
-function renderTrendCell(row) {
-  if (!row) {
-    return `<td class="trend-cell"><span class="rank-pill empty">-</span></td>`;
-  }
-  return `<td class="trend-cell"><span class="rank-pill">#${escapeHtml(row.rank)}</span></td>`;
+function renderCaptainStrip(captainSummary) {
+  return `
+    <section class="panel captain-strip">
+      <div class="section-kicker">Most captained</div>
+      <div class="captain-list">
+        ${captainSummary.map((captain, index) => `
+          <div class="captain-chip ${index === 0 ? "primary" : ""}">
+            <span class="captain-dot">${escapeHtml(captain.name.slice(0, 2).toUpperCase())}</span>
+            <div>
+              <div class="captain-name">${escapeHtml(captain.name)}</div>
+              <div class="captain-meta">${escapeHtml(captain.pct)}%</div>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderMovementCards(trendManagers) {
+  return `
+    <section class="movement-grid">
+      ${trendManagers.map((manager) => {
+        const recentChange = formatRankChange(manager.recentChange);
+        const seasonChange = formatRankChange(manager.seasonChange);
+        return `
+          <article class="movement-card">
+            <div class="movement-top">
+              <div>
+                <div class="movement-team">${escapeHtml(manager.entryName)}</div>
+                <div class="movement-manager">${escapeHtml(manager.playerName)}</div>
+              </div>
+              <div class="rank-badge">#${escapeHtml(manager.latestRank)}</div>
+            </div>
+            <div class="movement-stats">
+              <div class="delta-block">
+                <span class="delta-label">최근</span>
+                <span class="change-pill ${recentChange.className}">${escapeHtml(recentChange.label)}</span>
+              </div>
+              <div class="delta-block">
+                <span class="delta-label">시즌</span>
+                <span class="change-pill ${seasonChange.className}">${escapeHtml(seasonChange.label)}</span>
+              </div>
+              <div class="delta-block muted-block">
+                <span class="delta-label">GW</span>
+                <span class="delta-value">${escapeHtml(manager.gwPoints)}점</span>
+              </div>
+            </div>
+            <div class="rank-trail">
+              ${manager.recent.map((row) => row
+                ? `<span class="trail-pill">GW${escapeHtml(row.gw)} · #${escapeHtml(row.rank)}</span>`
+                : `<span class="trail-pill empty">-</span>`
+              ).join("")}
+            </div>
+          </article>
+        `;
+      }).join("")}
+    </section>
+  `;
 }
 
 function buildTrendChart(trend) {
-  const managers = trend.managers;
+  const managers = state.searchText.trim()
+    ? trend.managers
+    : trend.managers.slice(0, MAX_CHART_SERIES);
   const gameweeks = trend.gameweeks;
   const width = 1180;
-  const height = 620;
-  const padding = { top: 28, right: 150, bottom: 54, left: 110 };
+  const height = 560;
+  const padding = { top: 34, right: 130, bottom: 56, left: 72 };
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
-  const maxRank = Math.max(managers.length, 1);
+  const maxRank = Math.max(trend.managers.length, 1);
   const stepX = gameweeks.length > 1 ? innerWidth / (gameweeks.length - 1) : 0;
   const getX = (index) => padding.left + (stepX * index);
   const getY = (rank) => padding.top + ((rank - 1) / Math.max(maxRank - 1, 1)) * innerHeight;
@@ -159,7 +220,7 @@ function buildTrendChart(trend) {
     return `
       <g>
         <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
-        <text x="${padding.left - 18}" y="${y + 4}" fill="rgba(206,212,218,0.65)" font-size="12" text-anchor="end">#${index + 1}</text>
+        <text x="${padding.left - 14}" y="${y + 4}" fill="rgba(206,212,218,0.68)" font-size="12" text-anchor="end">#${index + 1}</text>
       </g>
     `;
   }).join("");
@@ -168,95 +229,75 @@ function buildTrendChart(trend) {
     const x = getX(index);
     return `
       <g>
-        <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4 8" />
-        <text x="${x}" y="${height - 16}" fill="rgba(206,212,218,0.72)" font-size="13" text-anchor="middle">GW${gw}</text>
+        <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="rgba(255,255,255,0.05)" stroke-dasharray="4 8" />
+        <text x="${x}" y="${height - 16}" fill="rgba(206,212,218,0.76)" font-size="12" text-anchor="middle">GW${gw}</text>
       </g>
     `;
   }).join("");
 
   const series = managers.map((manager) => {
     const points = manager.recent
-      .map((row, index) => row ? { x: getX(index), y: getY(row.rank) } : null)
+      .map((row, index) => row ? { x: getX(index), y: getY(row.rank), rank: row.rank } : null)
       .filter(Boolean);
 
     if (!points.length) return "";
 
     const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x},${point.y}`).join(" ");
-    const first = points[0];
     const last = points[points.length - 1];
 
     return `
       <g>
-        <path d="${path}" fill="none" stroke="${manager.color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="${path}" fill="none" stroke="${manager.color}" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" />
         ${points.map((point) => `<circle cx="${point.x}" cy="${point.y}" r="3.5" fill="${manager.color}" />`).join("")}
-        <text x="${first.x - 10}" y="${first.y + 4}" fill="${manager.color}" font-size="12" font-weight="700" text-anchor="end">${escapeHtml(manager.playerName)}</text>
         <text x="${last.x + 10}" y="${last.y + 4}" fill="${manager.color}" font-size="12" font-weight="700">${escapeHtml(manager.playerName)}</text>
       </g>
     `;
   }).join("");
 
   return `
-    <div class="trend-chart-panel">
+    <section class="trend-chart-panel">
       <div class="trend-head dark">
         <div>
-          <div class="title trend-title">Season rank trend</div>
-          <div class="small trend-subtitle">�ֱ� ${gameweeks.length}�� GW ������ �� ���� ���� ���� ��Ʈ</div>
+          <div class="title trend-title">개인별 순위 변화</div>
+          <div class="small trend-subtitle">최근 ${gameweeks.length}개 게임위크 기준입니다. 검색 중이면 해당 매니저만 차트에 남습니다.</div>
         </div>
+        <div class="chart-side-note">기본 표시: 상위 ${Math.min(MAX_CHART_SERIES, trend.managers.length)}팀</div>
       </div>
       <div class="chart-wrap dark">
-        <svg viewBox="0 0 ${width} ${height}" width="100%" class="trend-chart-svg">
+        <svg viewBox="0 0 ${width} ${height}" width="100%" class="trend-chart-svg" aria-label="league-rank-trend-chart">
           ${rankLines}
           ${gwLines}
           ${series}
         </svg>
       </div>
-    </div>
+    </section>
   `;
 }
 
 function renderTrendSection(managers, gameweeks) {
   const trend = buildRecentTrend(managers, gameweeks);
   const insights = getKeyInsights(trend.managers);
+  const sortedByMovement = [...trend.managers]
+    .sort((a, b) => (b.recentChange || -999) - (a.recentChange || -999) || (a.latestRank || 999) - (b.latestRank || 999));
 
   return `
     ${buildTrendChart(trend)}
-    <div class="insight-grid">
+    <section class="insight-grid">
       ${insights.map((item) => `
-        <div class="insight-card ${item.tone}">
+        <article class="insight-card ${item.tone}">
           <div class="small muted">${escapeHtml(item.label)}</div>
           <div class="insight-value">${escapeHtml(item.value)}</div>
           <div class="small muted">${escapeHtml(item.detail)}</div>
-        </div>
+        </article>
       `).join("")}
-    </div>
-    <div class="table-wrap">
-      <table class="trend-table">
-        <thead>
-          <tr>
-            <th>Team</th>
-            <th>Manager</th>
-            ${trend.gameweeks.map((gw) => `<th class="num">GW${gw}</th>`).join("")}
-            <th class="num">Recent</th>
-            <th class="num">Season</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${trend.managers.map((manager) => {
-            const recentChange = formatRankChange(manager.recentChange);
-            const seasonChange = formatRankChange(manager.seasonChange);
-            return `
-              <tr>
-                <td class="strong">${escapeHtml(manager.entryName)}</td>
-                <td>${escapeHtml(manager.playerName)}</td>
-                ${manager.recent.map(renderTrendCell).join("")}
-                <td class="num"><span class="change-pill ${recentChange.className}">${escapeHtml(recentChange.label)}</span></td>
-                <td class="num"><span class="change-pill ${seasonChange.className}">${escapeHtml(seasonChange.label)}</span></td>
-              </tr>
-            `;
-          }).join("")}
-        </tbody>
-      </table>
-    </div>
+    </section>
+    <section class="section-header">
+      <div>
+        <div class="title section-title">변화 카드</div>
+        <div class="small muted">각 팀의 최근 흐름을 카드 단위로 바로 확인할 수 있습니다.</div>
+      </div>
+    </section>
+    ${renderMovementCards(sortedByMovement)}
   `;
 }
 
@@ -269,56 +310,54 @@ function renderDashboard() {
 
   app.innerHTML = `
     <div class="shell">
-      <div class="header">
+      <header class="header">
         <div>
-          <div class="eyebrow">Search another league</div>
+          <div class="eyebrow">Search Another League</div>
           <div class="title">${escapeHtml(data.league?.name || `League ${state.leagueId}`)}</div>
           <div class="subtitle">${data.currentEvent ? `Gameweek ${data.currentEvent.id} live dashboard` : "Season dashboard"}</div>
         </div>
         <div class="soft-panel notice">
           <div class="small muted">Stored snapshot + background refresh</div>
-          <div class="tiny" style="margin-top:6px;color:var(--accent);text-transform:uppercase;letter-spacing:0.08em;">Saved ${escapeHtml(formatLocalTime(data.savedAt || data.refreshedAt))}</div>
-          <div class="tiny muted" style="margin-top:4px;">Age ${escapeHtml(formatAge(data.snapshotAgeMs || 0))}</div>
+          <div class="tiny notice-accent">Saved ${escapeHtml(formatLocalTime(data.savedAt || data.refreshedAt))}</div>
+          <div class="tiny muted">Age ${escapeHtml(formatAge(data.snapshotAgeMs || 0))}</div>
         </div>
-      </div>
+      </header>
 
       ${data.warning ? `<div class="panel status" style="margin-bottom:14px;">${escapeHtml(data.warning)}</div>` : ""}
-      ${data.stale ? `<div class="panel status" style="margin-bottom:14px;">Serving stored snapshot while background refresh catches up.</div>` : ""}
+      ${data.stale ? `<div class="panel status" style="margin-bottom:14px;">저장된 스냅샷을 먼저 보여주고 백그라운드에서 최신 데이터로 갱신 중입니다.</div>` : ""}
 
-      <form id="league-form" class="controls" style="margin-bottom:14px;">
-        <input id="league-input" class="pill-input" value="${escapeHtml(state.leagueInput)}" placeholder="822501 or full league URL">
-        <div class="soft-panel status" style="padding:14px 18px;">Live API + stored snapshots for faster reloads</div>
-        <button class="pill-button" type="submit">Load</button>
-      </form>
-
-      <div style="display:flex;justify-content:flex-end;margin:-4px 0 14px;">
-        <button id="refresh-button" class="pill-button" type="button">Refresh now</button>
-      </div>
-
-      <section class="panel captain-grid">
-        ${captainSummary.map((captain, index) => `
-          <div style="display:flex;align-items:center;gap:10px;">
-            <div style="width:34px;height:34px;border-radius:50%;background:${index === 0 ? "#eedbc1" : "#f3e7d7"};display:grid;place-items:center;color:var(--accent);font-weight:700;font-size:11px;">${escapeHtml(captain.name.slice(0, 2).toUpperCase())}</div>
-            <div>
-              <div class="small muted">${index === 0 ? "Top 3 Captain Picks" : ""}</div>
-              <div class="strong">${escapeHtml(captain.name)}</div>
-              <div class="small muted">${escapeHtml(captain.pct)}%</div>
-            </div>
+      <section class="panel toolbar-panel">
+        <form id="league-form" class="toolbar-grid">
+          <div class="field-block league-field">
+            <label class="field-label" for="league-input">리그 ID 또는 URL</label>
+            <input id="league-input" class="pill-input" value="${escapeHtml(state.leagueInput)}" placeholder="822501 or full league URL">
           </div>
-        `).join("")}
+          <div class="field-block search-field">
+            <label class="field-label" for="search-input">매니저 또는 팀 검색</label>
+            <input id="search-input" class="pill-input" value="${escapeHtml(state.searchText)}" placeholder="Search manager or team">
+          </div>
+          <div class="field-block scope-field">
+            <label class="field-label" for="scope-select">표시 범위</label>
+            <select id="scope-select" class="pill-select">
+              <option value="all" ${state.scope === "all" ? "selected" : ""}>ALL</option>
+              <option value="top10" ${state.scope === "top10" ? "selected" : ""}>TOP 10</option>
+              <option value="top20" ${state.scope === "top20" ? "selected" : ""}>TOP 20</option>
+            </select>
+          </div>
+          <label class="toggle-chip" for="chip-only">
+            <input id="chip-only" type="checkbox" ${state.chipOnly ? "checked" : ""}>
+            <span>Chip used only</span>
+          </label>
+          <div class="button-stack">
+            <button class="pill-button" type="submit">Load</button>
+            <button id="refresh-button" class="pill-button secondary" type="button">Refresh now</button>
+          </div>
+        </form>
       </section>
 
-      <section class="panel search-bar" style="margin-top:14px;">
-        <input id="search-input" class="pill-input" value="${escapeHtml(state.searchText)}" placeholder="Search manager or team">
-        <label class="small muted" style="display:flex;align-items:center;gap:8px;white-space:nowrap;"><input id="chip-only" type="checkbox" ${state.chipOnly ? "checked" : ""}> Chip used</label>
-        <select id="scope-select" class="pill-select">
-          <option value="all" ${state.scope === "all" ? "selected" : ""}>ALL</option>
-          <option value="top10" ${state.scope === "top10" ? "selected" : ""}>TOP 10</option>
-          <option value="top20" ${state.scope === "top20" ? "selected" : ""}>TOP 20</option>
-        </select>
-      </section>
+      ${renderCaptainStrip(captainSummary)}
 
-      <section class="panel trend-shell" style="margin-top:14px;">
+      <section class="panel trend-shell">
         ${renderTrendSection(managers, trendGameweeks)}
       </section>
     </div>
@@ -353,7 +392,7 @@ function bindDashboardEvents() {
     const input = document.getElementById("league-input");
     const nextLeagueId = String(input.value || "").match(/\/leagues\/(\d+)\//)?.[1] || String(input.value || "").trim();
     if (!/^\d+$/.test(nextLeagueId)) {
-      state.error = "League ID or league URL format is invalid.";
+      state.error = "League ID or league URL 형식이 올바르지 않습니다.";
       render();
       return;
     }

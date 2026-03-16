@@ -32,6 +32,16 @@ function formatLocalTime(value) {
   return new Date(value).toLocaleString();
 }
 
+function formatAge(ms) {
+  if (!Number.isFinite(ms)) return "-";
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  return `${hours}h`;
+}
+
 function getScopedManagers(managers) {
   const searched = managers.filter((manager) => {
     const haystack = [manager.playerName, manager.entryName, manager.captainName].join(" ").toLowerCase();
@@ -82,10 +92,7 @@ function buildTrendSvg(managers, gameweeks) {
   const maxRank = Math.max(managers.length, 1);
   const stepX = gameweeks.length > 1 ? innerWidth / (gameweeks.length - 1) : 0;
   const getX = (index) => padding.left + stepX * index;
-  const getY = (rank) => {
-    if (maxRank === 1) return padding.top + innerHeight / 2;
-    return padding.top + ((rank - 1) / (maxRank - 1)) * innerHeight;
-  };
+  const getY = (rank) => maxRank === 1 ? padding.top + innerHeight / 2 : padding.top + ((rank - 1) / (maxRank - 1)) * innerHeight;
 
   const grid = Array.from({ length: Math.min(maxRank, 12) }, (_, index) => `
     <g>
@@ -102,9 +109,7 @@ function buildTrendSvg(managers, gameweeks) {
   `).join("");
 
   const lines = managers.map((manager) => {
-    const points = manager.trend
-      .filter(Boolean)
-      .map((row, index) => ({ x: getX(index), y: getY(row.rank), total: row.totalPoints }));
+    const points = manager.trend.filter(Boolean).map((row, index) => ({ x: getX(index), y: getY(row.rank) }));
     if (!points.length) return "";
     const d = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x},${point.y}`).join(" ");
     return `<path d="${d}" fill="none" stroke="${manager.color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"></path>`;
@@ -134,16 +139,24 @@ function renderDashboard() {
           <div class="subtitle">${data.currentEvent ? `Gameweek ${data.currentEvent.id} live dashboard` : "Season dashboard"}</div>
         </div>
         <div class="soft-panel notice">
-          <div class="small muted">Live scores recalculate on each refresh.</div>
-          <div class="tiny" style="margin-top:6px;color:var(--accent);text-transform:uppercase;letter-spacing:0.08em;">Refreshed ${escapeHtml(formatLocalTime(data.refreshedAt))}</div>
+          <div class="small muted">Stored snapshot + background refresh</div>
+          <div class="tiny" style="margin-top:6px;color:var(--accent);text-transform:uppercase;letter-spacing:0.08em;">Saved ${escapeHtml(formatLocalTime(data.savedAt || data.refreshedAt))}</div>
+          <div class="tiny muted" style="margin-top:4px;">Age ${escapeHtml(formatAge(data.snapshotAgeMs || 0))}</div>
         </div>
       </div>
 
+      ${data.warning ? `<div class="panel status" style="margin-bottom:14px;">${escapeHtml(data.warning)}</div>` : ""}
+      ${data.stale ? `<div class="panel status" style="margin-bottom:14px;">Serving stored snapshot while background refresh catches up.</div>` : ""}
+
       <form id="league-form" class="controls" style="margin-bottom:14px;">
         <input id="league-input" class="pill-input" value="${escapeHtml(state.leagueInput)}" placeholder="822501 or full league URL">
-        <div class="soft-panel status" style="padding:14px 18px;">Server-backed live data for Railway deployment</div>
+        <div class="soft-panel status" style="padding:14px 18px;">Live API + stored snapshots for faster reloads</div>
         <button class="pill-button" type="submit">Load</button>
       </form>
+
+      <div style="display:flex;justify-content:flex-end;margin:-4px 0 14px;">
+        <button id="refresh-button" class="pill-button" type="button">Refresh now</button>
+      </div>
 
       <section class="panel captain-grid">
         ${captainSummary.map((captain, index) => `
@@ -244,14 +257,13 @@ function renderDashboard() {
           </div>
 
           <div class="panel" style="padding:16px;">
-            <div class="title" style="font-size:18px;">API sources</div>
+            <div class="title" style="font-size:18px;">Data strategy</div>
             <div class="api-list small muted" style="margin-top:12px;gap:8px;">
-              <div>/api/leagues-classic/{leagueId}/standings/</div>
-              <div>/api/entry/{entryId}/history/</div>
-              <div>/api/entry/{entryId}/event/{gw}/picks/</div>
-              <div>/api/event/{gw}/live/</div>
-              <div>/api/bootstrap-static/</div>
-              <div>/api/fixtures/?event={gw}</div>
+              <div>Stored snapshots in /data/leagues/{leagueId}</div>
+              <div>Latest snapshot served immediately</div>
+              <div>Background refresh keeps current GW updated</div>
+              <div>Historical snapshot files keep time-based trail</div>
+              <div>Default league auto-refresh on server</div>
             </div>
           </div>
         </div>
@@ -281,6 +293,7 @@ function bindDashboardEvents() {
   const searchInput = document.getElementById("search-input");
   const chipOnly = document.getElementById("chip-only");
   const scopeSelect = document.getElementById("scope-select");
+  const refreshButton = document.getElementById("refresh-button");
 
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -295,7 +308,11 @@ function bindDashboardEvents() {
     state.leagueInput = nextLeagueId;
     state.selectedEntry = null;
     window.history.replaceState({}, "", `/league/${nextLeagueId}`);
-    await loadDashboard();
+    await loadDashboard(true);
+  });
+
+  refreshButton?.addEventListener("click", async () => {
+    await loadDashboard(true);
   });
 
   searchInput?.addEventListener("input", (event) => {
@@ -321,13 +338,13 @@ function bindDashboardEvents() {
   });
 }
 
-async function loadDashboard(refresh = false) {
+async function loadDashboard(forceRefresh = false) {
   state.loading = true;
   state.error = "";
   render();
 
   try {
-    const response = await fetch(`/api/league/${state.leagueId}${refresh ? "?refresh=1" : ""}`);
+    const response = await fetch(`/api/league/${state.leagueId}${forceRefresh ? "?refresh=1" : ""}`);
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "Failed to load dashboard");

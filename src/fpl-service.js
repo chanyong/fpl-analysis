@@ -1,4 +1,7 @@
+﻿const { readLatestSnapshot, writeSnapshot } = require("./storage");
+
 const API_BASE = "https://fantasy.premierleague.com/api/";
+const REQUEST_TIMEOUT_MS = 15000;
 
 const CHIP_LABELS = {
   "3xc": "Triple Captain",
@@ -15,7 +18,13 @@ const POSITION_LABELS = {
   4: "FWD"
 };
 
-const cache = new Map();
+const CHART_COLORS = [
+  "#cf8952", "#67b39f", "#72b9ea", "#d3829f", "#e4ad55", "#8b7fe6", "#84c76b", "#e98e64",
+  "#6db8c7", "#c59652", "#ea7d7d", "#8c9cdf", "#57a88e", "#bb6ba2", "#7f9b47", "#c3a15c",
+  "#599dc2", "#d49f73", "#95b86f", "#a080d8"
+];
+
+const memoryCache = new Map();
 
 function buildApiUrl(pathname, query = {}) {
   const url = new URL(pathname, API_BASE);
@@ -28,27 +37,35 @@ function buildApiUrl(pathname, query = {}) {
 }
 
 async function fetchJson(pathname, query = {}) {
-  const response = await fetch(buildApiUrl(pathname, query), {
-    headers: { Accept: "application/json" }
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  if (!response.ok) {
-    throw new Error(`FPL API request failed: ${response.status} ${response.statusText}`);
+  try {
+    const response = await fetch(buildApiUrl(pathname, query), {
+      headers: { Accept: "application/json" },
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`FPL API request failed: ${response.status} ${response.statusText}`);
+    }
+
+    return response.json();
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return response.json();
 }
 
 async function getCached(key, ttlMs, loader, refresh = false) {
   const now = Date.now();
-  const cached = cache.get(key);
+  const cached = memoryCache.get(key);
 
   if (!refresh && cached && cached.expiresAt > now) {
     return cached.value;
   }
 
   const value = await loader();
-  cache.set(key, {
+  memoryCache.set(key, {
     value,
     expiresAt: now + ttlMs
   });
@@ -217,9 +234,7 @@ function buildManagerSummary(manager, timelineEntry, liveMap) {
 function buildCaptainSummary(managers) {
   const counts = {};
   managers.forEach((manager) => {
-    if (!manager.captainName || manager.captainName === "-") {
-      return;
-    }
+    if (!manager.captainName || manager.captainName === "-") return;
     counts[manager.captainName] = (counts[manager.captainName] || 0) + 1;
   });
 
@@ -262,11 +277,7 @@ function buildLiveBonus(fixtures, bootstrap, liveMap) {
     });
 }
 
-function formatRefreshTime() {
-  return new Date().toISOString();
-}
-
-async function getLeagueDashboard(leagueId, options = {}) {
+async function buildLeagueDashboard(leagueId, options = {}) {
   const { refresh = false } = options;
   const bootstrap = await getCached(
     "bootstrap-static",
@@ -280,12 +291,7 @@ async function getLeagueDashboard(leagueId, options = {}) {
 
   const historyPayloads = await Promise.all(
     standingsPayload.results.map((row) =>
-      getCached(
-        `history:${row.entry}`,
-        60 * 1000,
-        () => fetchJson(`entry/${row.entry}/history/`),
-        refresh
-      )
+      getCached(`history:${row.entry}`, 60 * 1000, () => fetchJson(`entry/${row.entry}/history/`), refresh)
     )
   );
 
@@ -315,21 +321,11 @@ async function getLeagueDashboard(leagueId, options = {}) {
   const trendData = buildTrendData(bootstrap, managersBase);
 
   const livePayload = currentEvent
-    ? await getCached(
-        `live:${currentEvent.id}`,
-        20 * 1000,
-        () => fetchJson(`event/${currentEvent.id}/live/`),
-        refresh
-      )
+    ? await getCached(`live:${currentEvent.id}`, 20 * 1000, () => fetchJson(`event/${currentEvent.id}/live/`), refresh)
     : { elements: [] };
 
   const fixtures = currentEvent
-    ? await getCached(
-        `fixtures:${currentEvent.id}`,
-        20 * 1000,
-        () => fetchJson("fixtures/", { event: currentEvent.id }),
-        refresh
-      )
+    ? await getCached(`fixtures:${currentEvent.id}`, 20 * 1000, () => fetchJson("fixtures/", { event: currentEvent.id }), refresh)
     : [];
 
   const liveMap = buildLiveElementMap(bootstrap, livePayload);
@@ -352,22 +348,24 @@ async function getLeagueDashboard(leagueId, options = {}) {
   return {
     league: standingsPayload.league,
     currentEvent,
-    refreshedAt: formatRefreshTime(),
-    trend: {
-      gameweeks: trendData.gameweeks
-    },
+    refreshedAt: new Date().toISOString(),
+    trend: { gameweeks: trendData.gameweeks },
     managers,
     captainSummary: buildCaptainSummary(managers),
     liveBonus: buildLiveBonus(fixtures, bootstrap, liveMap)
   };
 }
 
-const CHART_COLORS = [
-  "#cf8952", "#67b39f", "#72b9ea", "#d3829f", "#e4ad55", "#8b7fe6", "#84c76b", "#e98e64",
-  "#6db8c7", "#c59652", "#ea7d7d", "#8c9cdf", "#57a88e", "#bb6ba2", "#7f9b47", "#c3a15c",
-  "#599dc2", "#d49f73", "#95b86f", "#a080d8"
-];
+async function refreshLeagueDashboard(leagueId, options = {}) {
+  const payload = await buildLeagueDashboard(leagueId, options);
+  return writeSnapshot(leagueId, payload);
+}
+
+function getStoredLeagueDashboard(leagueId) {
+  return readLatestSnapshot(leagueId);
+}
 
 module.exports = {
-  getLeagueDashboard
+  getStoredLeagueDashboard,
+  refreshLeagueDashboard
 };

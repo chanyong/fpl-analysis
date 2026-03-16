@@ -176,7 +176,7 @@ function buildTrendChart(trend) {
 
   const series = managers.map((manager) => {
     const points = manager.recent
-      .map((row, index) => row ? { x: getX(index), y: getY(row.rank), rank: row.rank } : null)
+      .map((row, index) => row ? { x: getX(index), y: getY(row.rank) } : null)
       .filter(Boolean);
 
     if (!points.length) return "";
@@ -316,39 +316,6 @@ function renderDashboard() {
           <option value="top10" ${state.scope === "top10" ? "selected" : ""}>TOP 10</option>
           <option value="top20" ${state.scope === "top20" ? "selected" : ""}>TOP 20</option>
         </select>
-      </section>
-
-      <section class="panel" style="margin-top:14px;overflow:hidden;">
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Team</th>
-                <th>Manager</th>
-                <th>Captain</th>
-                <th>Chip</th>
-                <th class="num">Players Played</th>
-                <th class="num">GW Points</th>
-                <th class="num">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${managers.map((manager) => `
-                <tr>
-                  <td>${escapeHtml(manager.latestRank)}</td>
-                  <td class="strong">${escapeHtml(manager.entryName)}</td>
-                  <td>${escapeHtml(manager.playerName)}</td>
-                  <td>${escapeHtml(manager.captainName)}</td>
-                  <td class="muted">${escapeHtml(manager.chipLabel)}</td>
-                  <td class="num">${escapeHtml(manager.playersPlayed)}</td>
-                  <td class="num strong">${escapeHtml(manager.gwPoints)}</td>
-                  <td class="num strong">${escapeHtml(manager.totalPoints)}</td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
-        </div>
       </section>
 
       <section class="panel trend-shell" style="margin-top:14px;">

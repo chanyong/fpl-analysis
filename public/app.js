@@ -40,42 +40,6 @@ function formatAge(ms) {
   return `${hours}시간`;
 }
 
-function buildRecentTrend(managers, gameweeks) {
-  const safeGameweeks = Array.isArray(gameweeks) ? gameweeks : [];
-  const recentGameweeks = safeGameweeks.slice(-RECENT_TREND_COUNT);
-
-  return {
-    gameweeks: recentGameweeks,
-    managers: managers.map((manager) => {
-      const trend = Array.isArray(manager.trend) ? manager.trend : [];
-      const filtered = trend.filter(Boolean);
-      const recent = recentGameweeks.map((gw) => trend.find((row) => row?.gw === gw) || null);
-      const recentFiltered = recent.filter(Boolean);
-      const firstRecentRank = recentFiltered[0]?.rank ?? null;
-      const latestRecentRank = recentFiltered[recentFiltered.length - 1]?.rank ?? null;
-      const seasonFirstRank = filtered[0]?.rank ?? null;
-      const seasonLatestRank = filtered[filtered.length - 1]?.rank ?? null;
-      const bestRank = filtered.reduce((best, row) => row && (!best || row.rank < best) ? row.rank : best, null);
-
-      return {
-        entry: manager.entry,
-        entryName: manager.entryName,
-        playerName: manager.playerName,
-        latestRank: manager.latestRank,
-        gwPoints: manager.gwPoints,
-        totalPoints: manager.totalPoints,
-        captainName: manager.captainName,
-        color: manager.color || "#999999",
-        bestRank,
-        seasonChange: Number.isFinite(seasonFirstRank) && Number.isFinite(seasonLatestRank) ? seasonFirstRank - seasonLatestRank : null,
-        recentChange: Number.isFinite(firstRecentRank) && Number.isFinite(latestRecentRank) ? firstRecentRank - latestRecentRank : null,
-        recent,
-        trend: filtered
-      };
-    })
-  };
-}
-
 function formatRankChange(change) {
   if (!Number.isFinite(change) || change === 0) {
     return { label: "-", className: "flat", text: "변화 없음" };
@@ -84,6 +48,41 @@ function formatRankChange(change) {
     return { label: `+${change}`, className: "up", text: `${change}계단 상승` };
   }
   return { label: `${change}`, className: "down", text: `${Math.abs(change)}계단 하락` };
+}
+
+function buildSeasonTrend(managers, gameweeks) {
+  const safeGameweeks = Array.isArray(gameweeks) ? gameweeks : [];
+  const recentGameweeks = safeGameweeks.slice(-RECENT_TREND_COUNT);
+
+  return {
+    gameweeks: safeGameweeks,
+    recentGameweeks,
+    managers: managers.map((manager) => {
+      const trend = Array.isArray(manager.trend) ? manager.trend.filter(Boolean) : [];
+      const byGw = new Map(trend.map((row) => [row.gw, row]));
+      const full = safeGameweeks.map((gw) => byGw.get(gw) || null);
+      const recent = recentGameweeks.map((gw) => byGw.get(gw) || null);
+      const firstRank = trend[0]?.rank ?? null;
+      const latestRank = trend[trend.length - 1]?.rank ?? null;
+      const firstRecentRank = recent.filter(Boolean)[0]?.rank ?? null;
+      const latestRecentRank = recent.filter(Boolean).slice(-1)[0]?.rank ?? null;
+
+      return {
+        entry: manager.entry,
+        entryName: manager.entryName,
+        playerName: manager.playerName,
+        latestRank: manager.latestRank,
+        gwPoints: manager.gwPoints,
+        totalPoints: manager.totalPoints,
+        color: manager.color || "#999999",
+        seasonChange: Number.isFinite(firstRank) && Number.isFinite(latestRank) ? firstRank - latestRank : null,
+        recentChange: Number.isFinite(firstRecentRank) && Number.isFinite(latestRecentRank) ? firstRecentRank - latestRecentRank : null,
+        full,
+        recent,
+        trend
+      };
+    })
+  };
 }
 
 function getKeyInsights(trendManagers) {
@@ -188,16 +187,9 @@ function buildLeagueStats(managers, gameweeks) {
     firstPlaceTop: mapCountRanking(firstPlaceCounts),
     secondPlaceTop: mapCountRanking(secondPlaceCounts),
     cumulativeLeaderTop: mapCountRanking(cumulativeLeaderCounts),
-    weeklyHighScoresTop: weeklyHighScores
-      .sort((a, b) => b.value - a.value || a.gw - b.gw)
-      .slice(0, STAT_LIMIT),
-    averageEventPointsTop: averageEventScores
-      .sort((a, b) => b.value - a.value)
-      .slice(0, STAT_LIMIT),
-    rankJumpTop: weeklyRankJumps
-      .filter((item) => item.value > 0)
-      .sort((a, b) => b.value - a.value || a.gw - b.gw)
-      .slice(0, STAT_LIMIT),
+    weeklyHighScoresTop: weeklyHighScores.sort((a, b) => b.value - a.value || a.gw - b.gw).slice(0, STAT_LIMIT),
+    averageEventPointsTop: averageEventScores.sort((a, b) => b.value - a.value).slice(0, STAT_LIMIT),
+    rankJumpTop: weeklyRankJumps.filter((item) => item.value > 0).sort((a, b) => b.value - a.value || a.gw - b.gw).slice(0, STAT_LIMIT),
     trackedGameweeks: gameweeks.length
   };
 }
@@ -228,7 +220,7 @@ function renderLeagueStatsSection(managers, gameweeks) {
 
   return `
     <section class="stats-shell">
-      <div class="section-header">
+      <div class="section-header compact">
         <div>
           <div class="title section-title">GW 통계</div>
           <div class="small muted">GW1부터 현재까지 ${stats.trackedGameweeks}개 게임위크를 기준으로 계산했습니다.</div>
@@ -246,44 +238,37 @@ function renderLeagueStatsSection(managers, gameweeks) {
   `;
 }
 
-function renderMovementCards(trendManagers) {
+function renderRankMatrix(trend) {
   return `
-    <section class="movement-grid">
-      ${trendManagers.map((manager) => {
-        const recentChange = formatRankChange(manager.recentChange);
-        const seasonChange = formatRankChange(manager.seasonChange);
-        return `
-          <article class="movement-card">
-            <div class="movement-top">
-              <div>
-                <div class="movement-team">${escapeHtml(manager.entryName)}</div>
-                <div class="movement-manager">${escapeHtml(manager.playerName)}</div>
-              </div>
-              <div class="rank-badge">#${escapeHtml(manager.latestRank)}</div>
-            </div>
-            <div class="movement-stats">
-              <div class="delta-block">
-                <span class="delta-label">최근</span>
-                <span class="change-pill ${recentChange.className}">${escapeHtml(recentChange.label)}</span>
-              </div>
-              <div class="delta-block">
-                <span class="delta-label">시즌</span>
-                <span class="change-pill ${seasonChange.className}">${escapeHtml(seasonChange.label)}</span>
-              </div>
-              <div class="delta-block muted-block">
-                <span class="delta-label">GW</span>
-                <span class="delta-value">${escapeHtml(manager.gwPoints)}점</span>
-              </div>
-            </div>
-            <div class="rank-trail">
-              ${manager.recent.map((row) => row
-                ? `<span class="trail-pill">GW${escapeHtml(row.gw)} · #${escapeHtml(row.rank)}</span>`
-                : `<span class="trail-pill empty">-</span>`
-              ).join("")}
-            </div>
-          </article>
-        `;
-      }).join("")}
+    <section class="matrix-shell">
+      <div class="section-header compact">
+        <div>
+          <div class="title section-title">GW별 누적점수 기준 리그 등수표</div>
+          <div class="small muted">GW1부터 현재까지 각 매니저의 누적점수 기준 리그 등수입니다.</div>
+        </div>
+      </div>
+      <div class="table-wrap matrix-wrap">
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>Team</th>
+              <th>Manager</th>
+              ${trend.gameweeks.map((gw) => `<th class="num">GW${gw}</th>`).join("")}
+              <th class="num">Now</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${trend.managers.map((manager) => `
+              <tr>
+                <td class="strong">${escapeHtml(manager.entryName)}</td>
+                <td>${escapeHtml(manager.playerName)}</td>
+                ${manager.full.map((row) => `<td class="num">${row ? `#${escapeHtml(row.rank)}` : '-'}</td>`).join("")}
+                <td class="num strong">#${escapeHtml(manager.latestRank)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
     </section>
   `;
 }
@@ -291,9 +276,9 @@ function renderMovementCards(trendManagers) {
 function buildTrendChart(trend) {
   const managers = trend.managers.slice(0, MAX_CHART_SERIES);
   const gameweeks = trend.gameweeks;
-  const width = 1180;
-  const height = 560;
-  const padding = { top: 34, right: 130, bottom: 56, left: 72 };
+  const width = Math.max(980, 160 + (gameweeks.length * 34));
+  const height = 500;
+  const padding = { top: 28, right: 112, bottom: 48, left: 54 };
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
   const maxRank = Math.max(trend.managers.length, 1);
@@ -306,7 +291,7 @@ function buildTrendChart(trend) {
     return `
       <g>
         <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
-        <text x="${padding.left - 14}" y="${y + 4}" fill="rgba(206,212,218,0.68)" font-size="12" text-anchor="end">#${index + 1}</text>
+        <text x="${padding.left - 10}" y="${y + 4}" fill="rgba(206,212,218,0.68)" font-size="11" text-anchor="end">#${index + 1}</text>
       </g>
     `;
   }).join("");
@@ -316,13 +301,13 @@ function buildTrendChart(trend) {
     return `
       <g>
         <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="rgba(255,255,255,0.05)" stroke-dasharray="4 8" />
-        <text x="${x}" y="${height - 16}" fill="rgba(206,212,218,0.76)" font-size="12" text-anchor="middle">GW${gw}</text>
+        <text x="${x}" y="${height - 14}" fill="rgba(206,212,218,0.76)" font-size="11" text-anchor="middle">${gw}</text>
       </g>
     `;
   }).join("");
 
   const series = managers.map((manager) => {
-    const points = manager.recent
+    const points = manager.full
       .map((row, index) => row ? { x: getX(index), y: getY(row.rank) } : null)
       .filter(Boolean);
 
@@ -333,9 +318,9 @@ function buildTrendChart(trend) {
 
     return `
       <g>
-        <path d="${path}" fill="none" stroke="${manager.color}" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" />
-        ${points.map((point) => `<circle cx="${point.x}" cy="${point.y}" r="3.5" fill="${manager.color}" />`).join("")}
-        <text x="${last.x + 10}" y="${last.y + 4}" fill="${manager.color}" font-size="12" font-weight="700">${escapeHtml(manager.playerName)}</text>
+        <path d="${path}" fill="none" stroke="${manager.color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+        ${points.map((point) => `<circle cx="${point.x}" cy="${point.y}" r="3" fill="${manager.color}" />`).join("")}
+        <text x="${last.x + 8}" y="${last.y + 4}" fill="${manager.color}" font-size="11" font-weight="700">${escapeHtml(manager.playerName)}</text>
       </g>
     `;
   }).join("");
@@ -345,7 +330,7 @@ function buildTrendChart(trend) {
       <div class="trend-head dark">
         <div>
           <div class="title trend-title">개인별 순위 변화</div>
-          <div class="small trend-subtitle">최근 ${gameweeks.length}개 게임위크 기준 상위 ${Math.min(MAX_CHART_SERIES, trend.managers.length)}팀 흐름입니다.</div>
+          <div class="small trend-subtitle">GW1부터 현재 GW까지 누적점수 기준 리그 등수 변화입니다. 차트는 모바일 가독성을 위해 상위 ${Math.min(MAX_CHART_SERIES, trend.managers.length)}팀을 표시합니다.</div>
         </div>
       </div>
       <div class="chart-wrap dark">
@@ -360,10 +345,8 @@ function buildTrendChart(trend) {
 }
 
 function renderTrendSection(managers, gameweeks) {
-  const trend = buildRecentTrend(managers, gameweeks);
+  const trend = buildSeasonTrend(managers, gameweeks);
   const insights = getKeyInsights(trend.managers);
-  const sortedByMovement = [...trend.managers]
-    .sort((a, b) => (b.recentChange || -999) - (a.recentChange || -999) || (a.latestRank || 999) - (b.latestRank || 999));
 
   return `
     ${buildTrendChart(trend)}
@@ -376,14 +359,8 @@ function renderTrendSection(managers, gameweeks) {
         </article>
       `).join("")}
     </section>
-    <section class="section-header">
-      <div>
-        <div class="title section-title">변화 카드</div>
-        <div class="small muted">각 팀의 최근 흐름을 카드 단위로 바로 확인할 수 있습니다.</div>
-      </div>
-    </section>
-    ${renderMovementCards(sortedByMovement)}
-    ${renderLeagueStatsSection(trend.managers, gameweeks)}
+    ${renderRankMatrix(trend)}
+    ${renderLeagueStatsSection(trend.managers, trend.gameweeks)}
   `;
 }
 
@@ -396,7 +373,7 @@ function renderDashboard() {
     <div class="shell">
       <header class="header">
         <div>
-          <div class="eyebrow">Search Another League</div>
+          <div class="eyebrow">League Dashboard</div>
           <div class="title">${escapeHtml(data.league?.name || `League ${state.leagueId}`)}</div>
           <div class="subtitle">${data.currentEvent ? `Gameweek ${data.currentEvent.id} live dashboard` : "Season dashboard"}</div>
         </div>
@@ -431,13 +408,13 @@ function render() {
   renderDashboard();
 }
 
-async function loadDashboard(forceRefresh = false) {
+async function loadDashboard() {
   state.loading = true;
   state.error = "";
   render();
 
   try {
-    const response = await fetch(`/api/league/${state.leagueId}${forceRefresh ? "?refresh=1" : ""}`);
+    const response = await fetch(`/api/league/${state.leagueId}`);
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "Failed to load dashboard");

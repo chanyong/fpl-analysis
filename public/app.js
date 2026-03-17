@@ -182,9 +182,7 @@ function renderMovementCards(trendManagers) {
 }
 
 function buildTrendChart(trend) {
-  const managers = state.searchText.trim()
-    ? trend.managers
-    : trend.managers.slice(0, MAX_CHART_SERIES);
+  const managers = trend.managers.slice(0, MAX_CHART_SERIES);
   const gameweeks = trend.gameweeks;
   const width = 1180;
   const height = 560;
@@ -218,7 +216,7 @@ function buildTrendChart(trend) {
 
   const series = managers.map((manager) => {
     const points = manager.recent
-      .map((row, index) => row ? { x: getX(index), y: getY(row.rank), rank: row.rank } : null)
+      .map((row, index) => row ? { x: getX(index), y: getY(row.rank) } : null)
       .filter(Boolean);
 
     if (!points.length) return "";
@@ -240,9 +238,8 @@ function buildTrendChart(trend) {
       <div class="trend-head dark">
         <div>
           <div class="title trend-title">개인별 순위 변화</div>
-          <div class="small trend-subtitle">최근 ${gameweeks.length}개 게임위크 기준입니다. 검색 중이면 해당 매니저만 차트에 남습니다.</div>
+          <div class="small trend-subtitle">최근 ${gameweeks.length}개 게임위크 기준 상위 ${Math.min(MAX_CHART_SERIES, trend.managers.length)}팀 흐름입니다.</div>
         </div>
-        <div class="chart-side-note">기본 표시: 상위 ${Math.min(MAX_CHART_SERIES, trend.managers.length)}팀</div>
       </div>
       <div class="chart-wrap dark">
         <svg viewBox="0 0 ${width} ${height}" width="100%" class="trend-chart-svg" aria-label="league-rank-trend-chart">
@@ -306,42 +303,11 @@ function renderDashboard() {
       ${data.warning ? `<div class="panel status" style="margin-bottom:14px;">${escapeHtml(data.warning)}</div>` : ""}
       ${data.stale ? `<div class="panel status" style="margin-bottom:14px;">저장된 스냅샷을 먼저 보여주고 백그라운드에서 최신 데이터로 갱신 중입니다.</div>` : ""}
 
-      <section class="panel toolbar-panel">
-        <form id="league-form" class="toolbar-grid">
-          <div class="field-block league-field">
-            <label class="field-label" for="league-input">리그 ID 또는 URL</label>
-            <input id="league-input" class="pill-input" value="${escapeHtml(state.leagueInput)}" placeholder="822501 or full league URL">
-          </div>
-          <div class="field-block search-field">
-            <label class="field-label" for="search-input">매니저 또는 팀 검색</label>
-            <input id="search-input" class="pill-input" value="${escapeHtml(state.searchText)}" placeholder="Search manager or team">
-          </div>
-          <div class="field-block scope-field">
-            <label class="field-label" for="scope-select">표시 범위</label>
-            <select id="scope-select" class="pill-select">
-              <option value="all" ${state.scope === "all" ? "selected" : ""}>ALL</option>
-              <option value="top10" ${state.scope === "top10" ? "selected" : ""}>TOP 10</option>
-              <option value="top20" ${state.scope === "top20" ? "selected" : ""}>TOP 20</option>
-            </select>
-          </div>
-          <label class="toggle-chip" for="chip-only">
-            <input id="chip-only" type="checkbox" ${state.chipOnly ? "checked" : ""}>
-            <span>Chip used only</span>
-          </label>
-          <div class="button-stack">
-            <button class="pill-button" type="submit">Load</button>
-            <button id="refresh-button" class="pill-button secondary" type="button">Refresh now</button>
-          </div>
-        </form>
-      </section>
-
       <section class="panel trend-shell">
         ${renderTrendSection(managers, trendGameweeks)}
       </section>
     </div>
   `;
-
-  bindDashboardEvents();
 }
 
 function render() {
@@ -356,48 +322,6 @@ function render() {
   }
 
   renderDashboard();
-}
-
-function bindDashboardEvents() {
-  const form = document.getElementById("league-form");
-  const searchInput = document.getElementById("search-input");
-  const chipOnly = document.getElementById("chip-only");
-  const scopeSelect = document.getElementById("scope-select");
-  const refreshButton = document.getElementById("refresh-button");
-
-  form?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const input = document.getElementById("league-input");
-    const nextLeagueId = String(input.value || "").match(/\/leagues\/(\d+)\//)?.[1] || String(input.value || "").trim();
-    if (!/^\d+$/.test(nextLeagueId)) {
-      state.error = "League ID or league URL 형식이 올바르지 않습니다.";
-      render();
-      return;
-    }
-    state.leagueId = nextLeagueId;
-    state.leagueInput = nextLeagueId;
-    window.history.replaceState({}, "", `/league/${nextLeagueId}`);
-    await loadDashboard(true);
-  });
-
-  refreshButton?.addEventListener("click", async () => {
-    await loadDashboard(true);
-  });
-
-  searchInput?.addEventListener("input", (event) => {
-    state.searchText = event.target.value;
-    render();
-  });
-
-  chipOnly?.addEventListener("change", (event) => {
-    state.chipOnly = event.target.checked;
-    render();
-  });
-
-  scopeSelect?.addEventListener("change", (event) => {
-    state.scope = event.target.value;
-    render();
-  });
 }
 
 async function loadDashboard(forceRefresh = false) {

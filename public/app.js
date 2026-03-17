@@ -299,8 +299,7 @@ function renderManagerSelector(allManagers, selectedEntries) {
     <section class="selector-shell">
       <div class="section-header compact selector-header">
         <div>
-          <div class="title section-title">표시할 매니저 선택</div>
-          <div class="small muted">체크된 매니저만 차트에 표시됩니다.</div>
+          <div class="title section-title">매니저 선택</div>
         </div>
         <div class="selector-actions">
           <button type="button" class="mini-button" data-select-all="1">전체 선택</button>

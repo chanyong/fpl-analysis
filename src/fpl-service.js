@@ -117,7 +117,7 @@ function getTrackedGameweeks(bootstrap, histories) {
   return Array.from(new Set([...finishedEvents, ...historyEvents])).sort((a, b) => a - b);
 }
 
-function buildTrendData(bootstrap, managers) {
+function buildTrendData(bootstrap, managers, currentEventId) {
   const gameweeks = getTrackedGameweeks(bootstrap, managers.map((manager) => manager.history));
   const timelines = {};
 
@@ -126,6 +126,14 @@ function buildTrendData(bootstrap, managers) {
     (manager.history.current || []).forEach((row) => {
       byGw[row.event] = row;
     });
+
+    if (currentEventId && manager.picks?.entry_history?.event === currentEventId) {
+      byGw[currentEventId] = {
+        event: currentEventId,
+        total_points: manager.picks.entry_history.total_points,
+        points: manager.picks.entry_history.points
+      };
+    }
 
     timelines[manager.entry] = gameweeks.map((gw) => {
       const row = byGw[gw];
@@ -201,26 +209,32 @@ function buildPlayerCard(pick, liveMap) {
   };
 }
 
-function buildManagerSummary(manager, timelineEntry, liveMap, trend) {
+function buildManagerSummary(manager, timelineEntry, liveMap, trend, currentEventId) {
   const picks = manager.picks?.picks || [];
   const cards = picks.map((pick) => buildPlayerCard(pick, liveMap));
   const starters = cards.filter((card) => card.multiplier > 0);
   const bench = cards.filter((card) => card.multiplier === 0);
   const captainPick = picks.find((pick) => pick.is_captain);
-  const gwPoints = picks.reduce((sum, pick) => {
+  const calculatedGwPoints = picks.reduce((sum, pick) => {
     const live = liveMap[pick.element];
     return sum + ((live?.points || 0) * pick.multiplier);
   }, 0);
+  const officialCurrentEventPoints = manager.picks?.entry_history?.event === currentEventId
+    ? manager.picks.entry_history.points
+    : null;
+  const officialCurrentTotalPoints = manager.picks?.entry_history?.event === currentEventId
+    ? manager.picks.entry_history.total_points
+    : null;
 
   return {
     entry: manager.entry,
     playerName: manager.playerName,
     entryName: manager.entryName,
     overallRank: manager.overallRank,
-    totalPoints: timelineEntry?.totalPoints ?? manager.overallTotal,
+    totalPoints: officialCurrentTotalPoints ?? timelineEntry?.totalPoints ?? manager.overallTotal,
     latestRank: timelineEntry?.rank ?? manager.overallRank,
-    eventPoints: timelineEntry?.eventPoints ?? 0,
-    gwPoints,
+    eventPoints: officialCurrentEventPoints ?? timelineEntry?.eventPoints ?? 0,
+    gwPoints: officialCurrentEventPoints ?? calculatedGwPoints,
     playersPlayed: starters.filter((card) => card.played).length,
     captainName: captainPick ? (liveMap[captainPick.element]?.name || `Player #${captainPick.element}`) : "-",
     chip: manager.picks?.active_chip || "",
@@ -318,7 +332,7 @@ async function buildLeagueDashboard(leagueId, options = {}) {
     picks: picksPayloads[index] || null
   }));
 
-  const trendData = buildTrendData(bootstrap, managersBase);
+  const trendData = buildTrendData(bootstrap, managersBase, currentEvent?.id);
 
   const livePayload = currentEvent
     ? await getCached(`live:${currentEvent.id}`, 20 * 1000, () => fetchJson(`event/${currentEvent.id}/live/`), refresh)
@@ -335,7 +349,7 @@ async function buildLeagueDashboard(leagueId, options = {}) {
       const filtered = trend.filter(Boolean);
       const latest = filtered.slice(-1)[0] || null;
       const previous = filtered.slice(-2, -1)[0] || null;
-      const summary = buildManagerSummary(manager, latest, liveMap, trend);
+      const summary = buildManagerSummary(manager, latest, liveMap, trend, currentEvent?.id);
 
       return {
         ...summary,
@@ -369,3 +383,5 @@ module.exports = {
   getStoredLeagueDashboard,
   refreshLeagueDashboard
 };
+
+

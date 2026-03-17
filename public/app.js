@@ -1,12 +1,12 @@
 ﻿const state = {
   leagueId: getLeagueIdFromPath(),
   loading: true,
+  refreshing: false,
   error: "",
   data: null,
   selectedEntries: []
 };
 
-const REFRESH_MS = 60000;
 const RECENT_TREND_COUNT = 8;
 const STAT_LIMIT = 5;
 const app = document.getElementById("app");
@@ -61,11 +61,10 @@ function buildSeasonTrend(managers, gameweeks) {
       const trend = Array.isArray(manager.trend) ? manager.trend.filter(Boolean) : [];
       const byGw = new Map(trend.map((row) => [row.gw, row]));
       const full = safeGameweeks.map((gw) => byGw.get(gw) || null);
-      const recent = recentGameweeks.map((gw) => byGw.get(gw) || null);
       const firstRank = trend[0]?.rank ?? null;
       const latestRank = trend[trend.length - 1]?.rank ?? null;
-      const firstRecentRank = recent.filter(Boolean)[0]?.rank ?? null;
-      const latestRecentRank = recent.filter(Boolean).slice(-1)[0]?.rank ?? null;
+      const firstRecentRank = recentGameweeks.map((gw) => byGw.get(gw) || null).filter(Boolean)[0]?.rank ?? null;
+      const latestRecentRank = recentGameweeks.map((gw) => byGw.get(gw) || null).filter(Boolean).slice(-1)[0]?.rank ?? null;
 
       return {
         entry: manager.entry,
@@ -84,44 +83,6 @@ function buildSeasonTrend(managers, gameweeks) {
   };
 }
 
-function getKeyInsights(trendManagers) {
-  const leader = [...trendManagers].sort((a, b) => (a.latestRank || 999) - (b.latestRank || 999))[0] || null;
-  const topScorer = [...trendManagers].sort((a, b) => (b.gwPoints || 0) - (a.gwPoints || 0))[0] || null;
-  const riser = [...trendManagers]
-    .filter((manager) => Number.isFinite(manager.recentChange) && manager.recentChange > 0)
-    .sort((a, b) => b.recentChange - a.recentChange)[0] || null;
-  const faller = [...trendManagers]
-    .filter((manager) => Number.isFinite(manager.recentChange) && manager.recentChange < 0)
-    .sort((a, b) => a.recentChange - b.recentChange)[0] || null;
-
-  return [
-    {
-      label: "현재 1위",
-      value: leader ? leader.entryName : "-",
-      detail: leader ? `${leader.playerName} · 현재 #${leader.latestRank}` : "-",
-      tone: "neutral"
-    },
-    {
-      label: `최근 ${RECENT_TREND_COUNT}GW 최고 상승`,
-      value: riser ? riser.entryName : "-",
-      detail: riser ? `${riser.playerName} · ${formatRankChange(riser.recentChange).text}` : "상승 팀 없음",
-      tone: "up"
-    },
-    {
-      label: `최근 ${RECENT_TREND_COUNT}GW 최대 하락`,
-      value: faller ? faller.entryName : "-",
-      detail: faller ? `${faller.playerName} · ${formatRankChange(faller.recentChange).text}` : "하락 팀 없음",
-      tone: "down"
-    },
-    {
-      label: "이번 GW 최고 득점",
-      value: topScorer ? topScorer.entryName : "-",
-      detail: topScorer ? `${topScorer.playerName} · ${topScorer.gwPoints}점` : "-",
-      tone: "neutral"
-    }
-  ];
-}
-
 function buildLeagueStats(managers, gameweeks) {
   const firstPlaceCounts = new Map();
   const secondPlaceCounts = new Map();
@@ -129,13 +90,35 @@ function buildLeagueStats(managers, gameweeks) {
   const weeklyHighScores = [];
   const weeklyRankJumps = [];
   const averageEventScores = [];
+  const podiumCounts = new Map();
+  const consistentTopFiveCounts = new Map();
+  const bestTotalPoints = [];
+  const lowestAverageRank = [];
 
   managers.forEach((manager) => {
+    let podium = 0;
+    let topFive = 0;
+
     averageEventScores.push({
       entry: manager.entry,
       entryName: manager.entryName,
       playerName: manager.playerName,
       value: Number((manager.trend.reduce((sum, row) => sum + row.eventPoints, 0) / Math.max(manager.trend.length, 1)).toFixed(1))
+    });
+
+    const avgRank = Number((manager.trend.reduce((sum, row) => sum + row.rank, 0) / Math.max(manager.trend.length, 1)).toFixed(2));
+    lowestAverageRank.push({
+      entry: manager.entry,
+      entryName: manager.entryName,
+      playerName: manager.playerName,
+      value: avgRank
+    });
+
+    bestTotalPoints.push({
+      entry: manager.entry,
+      entryName: manager.entryName,
+      playerName: manager.playerName,
+      value: manager.totalPoints
     });
 
     manager.trend.forEach((row, index) => {
@@ -146,6 +129,8 @@ function buildLeagueStats(managers, gameweeks) {
       if (row.rank === 2) {
         secondPlaceCounts.set(manager.entry, (secondPlaceCounts.get(manager.entry) || 0) + 1);
       }
+      if (row.rank <= 3) podium += 1;
+      if (row.rank <= 5) topFive += 1;
 
       weeklyHighScores.push({
         entry: manager.entry,
@@ -167,6 +152,9 @@ function buildLeagueStats(managers, gameweeks) {
         });
       }
     });
+
+    podiumCounts.set(manager.entry, podium);
+    consistentTopFiveCounts.set(manager.entry, topFive);
   });
 
   function mapCountRanking(counter) {
@@ -186,8 +174,12 @@ function buildLeagueStats(managers, gameweeks) {
     firstPlaceTop: mapCountRanking(firstPlaceCounts),
     secondPlaceTop: mapCountRanking(secondPlaceCounts),
     cumulativeLeaderTop: mapCountRanking(cumulativeLeaderCounts),
+    podiumTop: mapCountRanking(podiumCounts),
+    topFiveTop: mapCountRanking(consistentTopFiveCounts),
     weeklyHighScoresTop: weeklyHighScores.sort((a, b) => b.value - a.value || a.gw - b.gw).slice(0, STAT_LIMIT),
     averageEventPointsTop: averageEventScores.sort((a, b) => b.value - a.value).slice(0, STAT_LIMIT),
+    averageRankTop: lowestAverageRank.sort((a, b) => a.value - b.value).slice(0, STAT_LIMIT),
+    bestTotalPointsTop: bestTotalPoints.sort((a, b) => b.value - a.value).slice(0, STAT_LIMIT),
     rankJumpTop: weeklyRankJumps.filter((item) => item.value > 0).sort((a, b) => b.value - a.value || a.gw - b.gw).slice(0, STAT_LIMIT),
     trackedGameweeks: gameweeks.length
   };
@@ -229,8 +221,12 @@ function renderLeagueStatsSection(managers, gameweeks) {
         ${renderStatList("개별 GW 1위 최다", "각 GW 종료 시점 1등 횟수 Top 5", stats.firstPlaceTop, (item) => `${item.value}회`)}
         ${renderStatList("개별 GW 2위 최다", "각 GW 종료 시점 2등 횟수 Top 5", stats.secondPlaceTop, (item) => `${item.value}회`)}
         ${renderStatList("누적 1위 유지 최다", "누적점수 기준 주차별 1위 횟수 Top 5", stats.cumulativeLeaderTop, (item) => `${item.value}회`)}
+        ${renderStatList("포디움 최다", "주차별 3위 이내 진입 횟수 Top 5", stats.podiumTop, (item) => `${item.value}회`)}
+        ${renderStatList("Top5 유지 최다", "주차별 5위 이내 유지 횟수 Top 5", stats.topFiveTop, (item) => `${item.value}회`)}
+        ${renderStatList("누적점수 최고", "현재 누적점수 Top 5", stats.bestTotalPointsTop, (item) => `${item.value}점`)}
         ${renderStatList("개별 GW 최고득점", "단일 GW 득점 기록 Top 5", stats.weeklyHighScoresTop, (item) => `GW${item.gw} · ${item.value}점`)}
         ${renderStatList("주간 평균점수", "GW 평균 득점 Top 5", stats.averageEventPointsTop, (item) => `${item.value}점`)}
+        ${renderStatList("평균 순위 최고", "시즌 평균 리그 순위 Top 5", stats.averageRankTop, (item) => `${item.value}위`)}
         ${renderStatList("최대 순위 점프", "직전 GW 대비 상승폭 Top 5", stats.rankJumpTop, (item) => `GW${item.gw} · +${item.value}`)}
       </div>
     </section>
@@ -318,10 +314,9 @@ function renderManagerSelector(allManagers, selectedEntries) {
         </div>
         <div class="selector-actions">
           <button type="button" class="mini-button" data-select-all="1">전체 선택</button>
-          <button type="button" class="mini-button" data-clear-all="1">전체 해제</button>
         </div>
       </div>
-      <div class="selector-grid">
+      <div class="selector-grid compact">
         ${allManagers.map((manager) => `
           <label class="selector-chip ${selectedEntries.includes(manager.entry) ? 'active' : ''}">
             <input type="checkbox" data-entry-toggle="${manager.entry}" ${selectedEntries.includes(manager.entry) ? 'checked' : ''}>
@@ -339,7 +334,6 @@ function renderManagerSelector(allManagers, selectedEntries) {
 
 function renderTrendSection(managers, gameweeks) {
   const trend = buildSeasonTrend(managers, gameweeks);
-  const insights = getKeyInsights(trend.managers);
 
   if (!state.selectedEntries.length) {
     state.selectedEntries = trend.managers.map((manager) => manager.entry);
@@ -351,15 +345,6 @@ function renderTrendSection(managers, gameweeks) {
   return `
     ${buildTrendChart(trend, chartManagers)}
     ${renderManagerSelector(trend.managers, state.selectedEntries)}
-    <section class="insight-grid">
-      ${insights.map((item) => `
-        <article class="insight-card ${item.tone}">
-          <div class="small muted">${escapeHtml(item.label)}</div>
-          <div class="insight-value">${escapeHtml(item.value)}</div>
-          <div class="small muted">${escapeHtml(item.detail)}</div>
-        </article>
-      `).join("")}
-    </section>
     ${renderLeagueStatsSection(trend.managers, trend.gameweeks)}
   `;
 }
@@ -377,15 +362,18 @@ function renderDashboard() {
           <div class="title">${escapeHtml(data.league?.name || `League ${state.leagueId}`)}</div>
           <div class="subtitle">${data.currentEvent ? `Gameweek ${data.currentEvent.id} live dashboard` : "Season dashboard"}</div>
         </div>
-        <div class="soft-panel notice">
-          <div class="small muted">Stored snapshot + background refresh</div>
-          <div class="tiny notice-accent">Saved ${escapeHtml(formatLocalTime(data.savedAt || data.refreshedAt))}</div>
-          <div class="tiny muted">Age ${escapeHtml(formatAge(data.snapshotAgeMs || 0))}</div>
+        <div class="header-actions">
+          <div class="soft-panel notice">
+            <div class="small muted">Stored snapshot</div>
+            <div class="tiny notice-accent">Saved ${escapeHtml(formatLocalTime(data.savedAt || data.refreshedAt))}</div>
+            <div class="tiny muted">Age ${escapeHtml(formatAge(data.snapshotAgeMs || 0))}</div>
+          </div>
+          <button id="refresh-button" class="refresh-button" type="button">${state.refreshing ? 'Refreshing...' : 'Refresh'}</button>
         </div>
       </header>
 
       ${data.warning ? `<div class="panel status" style="margin-bottom:14px;">${escapeHtml(data.warning)}</div>` : ""}
-      ${data.stale ? `<div class="panel status" style="margin-bottom:14px;">저장된 스냅샷을 먼저 보여주고 백그라운드에서 최신 데이터로 갱신 중입니다.</div>` : ""}
+      ${data.stale ? `<div class="panel status" style="margin-bottom:14px;">저장된 스냅샷을 먼저 보여주고 있습니다. 원하면 상단 Refresh 버튼으로 최신값을 다시 가져오세요.</div>` : ""}
 
       <section class="panel trend-shell">
         ${renderTrendSection(managers, trendGameweeks)}
@@ -403,6 +391,10 @@ function bindDashboardEvents() {
       if (input.checked) {
         state.selectedEntries = Array.from(new Set([...state.selectedEntries, entry]));
       } else {
+        if (state.selectedEntries.length === 1) {
+          input.checked = true;
+          return;
+        }
         state.selectedEntries = state.selectedEntries.filter((value) => value !== entry);
       }
       renderDashboard();
@@ -414,9 +406,8 @@ function bindDashboardEvents() {
     renderDashboard();
   });
 
-  document.querySelector("button[data-clear-all='1']")?.addEventListener("click", () => {
-    state.selectedEntries = [];
-    renderDashboard();
+  document.getElementById("refresh-button")?.addEventListener("click", async () => {
+    await loadDashboard(true);
   });
 }
 
@@ -434,13 +425,14 @@ function render() {
   renderDashboard();
 }
 
-async function loadDashboard() {
-  state.loading = true;
+async function loadDashboard(forceRefresh = false) {
+  state.loading = !state.data;
+  state.refreshing = Boolean(forceRefresh && state.data);
   state.error = "";
   render();
 
   try {
-    const response = await fetch(`/api/league/${state.leagueId}`);
+    const response = await fetch(`/api/league/${state.leagueId}${forceRefresh ? '?refresh=1' : ''}`);
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "Failed to load dashboard");
@@ -453,11 +445,9 @@ async function loadDashboard() {
     state.error = error.message || "Unknown error";
   } finally {
     state.loading = false;
+    state.refreshing = false;
     render();
   }
 }
 
 loadDashboard();
-window.setInterval(() => {
-  loadDashboard();
-}, REFRESH_MS);

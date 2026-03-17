@@ -6,8 +6,6 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const publicDir = path.join(__dirname, "public");
 const refreshLocks = new Map();
-const REFRESH_INTERVAL_MS = 60 * 1000;
-const SNAPSHOT_STALE_MS = 5 * 60 * 1000;
 const defaultLeagueIds = (process.env.DEFAULT_LEAGUES || "822501")
   .split(",")
   .map((value) => value.trim())
@@ -51,8 +49,6 @@ app.get("/api/league/:leagueId", async (req, res) => {
 
     if (forceRefresh || !snapshot) {
       snapshot = await scheduleRefresh(leagueId, { refresh: true });
-    } else if (getSnapshotAgeMs(snapshot) > SNAPSHOT_STALE_MS) {
-      scheduleRefresh(leagueId, { refresh: true });
     }
 
     if (!snapshot) {
@@ -62,7 +58,7 @@ app.get("/api/league/:leagueId", async (req, res) => {
     res.json({
       ...snapshot,
       snapshotAgeMs: getSnapshotAgeMs(snapshot),
-      stale: getSnapshotAgeMs(snapshot) > SNAPSHOT_STALE_MS
+      stale: false
     });
   } catch (error) {
     const fallback = getStoredLeagueDashboard(leagueId);
@@ -102,9 +98,4 @@ app.get("/league/:leagueId", (_req, res) => {
 app.listen(port, async () => {
   console.log(`fpl-analysis listening on ${port}`);
   await Promise.all(defaultLeagueIds.map((leagueId) => scheduleRefresh(leagueId, { refresh: true })));
-  setInterval(() => {
-    defaultLeagueIds.forEach((leagueId) => {
-      scheduleRefresh(leagueId, { refresh: true });
-    });
-  }, REFRESH_INTERVAL_MS);
 });

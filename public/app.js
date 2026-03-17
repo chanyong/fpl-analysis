@@ -2,12 +2,12 @@
   leagueId: getLeagueIdFromPath(),
   loading: true,
   error: "",
-  data: null
+  data: null,
+  selectedEntries: []
 };
 
 const REFRESH_MS = 60000;
 const RECENT_TREND_COUNT = 8;
-const MAX_CHART_SERIES = 10;
 const STAT_LIMIT = 5;
 const app = document.getElementById("app");
 
@@ -78,7 +78,6 @@ function buildSeasonTrend(managers, gameweeks) {
         seasonChange: Number.isFinite(firstRank) && Number.isFinite(latestRank) ? firstRank - latestRank : null,
         recentChange: Number.isFinite(firstRecentRank) && Number.isFinite(latestRecentRank) ? firstRecentRank - latestRecentRank : null,
         full,
-        recent,
         trend
       };
     })
@@ -238,47 +237,12 @@ function renderLeagueStatsSection(managers, gameweeks) {
   `;
 }
 
-function renderRankMatrix(trend) {
-  return `
-    <section class="matrix-shell">
-      <div class="section-header compact">
-        <div>
-          <div class="title section-title">GW별 누적점수 기준 리그 등수표</div>
-          <div class="small muted">GW1부터 현재까지 각 매니저의 누적점수 기준 리그 등수입니다.</div>
-        </div>
-      </div>
-      <div class="table-wrap matrix-wrap">
-        <table class="matrix-table">
-          <thead>
-            <tr>
-              <th>Team</th>
-              <th>Manager</th>
-              ${trend.gameweeks.map((gw) => `<th class="num">GW${gw}</th>`).join("")}
-              <th class="num">Now</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${trend.managers.map((manager) => `
-              <tr>
-                <td class="strong">${escapeHtml(manager.entryName)}</td>
-                <td>${escapeHtml(manager.playerName)}</td>
-                ${manager.full.map((row) => `<td class="num">${row ? `#${escapeHtml(row.rank)}` : '-'}</td>`).join("")}
-                <td class="num strong">#${escapeHtml(manager.latestRank)}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  `;
-}
-
-function buildTrendChart(trend) {
-  const managers = trend.managers.slice(0, MAX_CHART_SERIES);
+function buildTrendChart(trend, selectedManagers) {
+  const managers = selectedManagers;
   const gameweeks = trend.gameweeks;
-  const width = Math.max(980, 160 + (gameweeks.length * 34));
-  const height = 500;
-  const padding = { top: 28, right: 112, bottom: 48, left: 54 };
+  const width = Math.max(980, 140 + (gameweeks.length * 30));
+  const height = Math.max(420, 140 + (trend.managers.length * 18));
+  const padding = { top: 24, right: 120, bottom: 42, left: 48 };
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
   const maxRank = Math.max(trend.managers.length, 1);
@@ -291,7 +255,7 @@ function buildTrendChart(trend) {
     return `
       <g>
         <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" stroke="rgba(255,255,255,0.08)" />
-        <text x="${padding.left - 10}" y="${y + 4}" fill="rgba(206,212,218,0.68)" font-size="11" text-anchor="end">#${index + 1}</text>
+        <text x="${padding.left - 8}" y="${y + 4}" fill="rgba(206,212,218,0.68)" font-size="10" text-anchor="end">#${index + 1}</text>
       </g>
     `;
   }).join("");
@@ -301,7 +265,7 @@ function buildTrendChart(trend) {
     return `
       <g>
         <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" stroke="rgba(255,255,255,0.05)" stroke-dasharray="4 8" />
-        <text x="${x}" y="${height - 14}" fill="rgba(206,212,218,0.76)" font-size="11" text-anchor="middle">${gw}</text>
+        <text x="${x}" y="${height - 12}" fill="rgba(206,212,218,0.76)" font-size="10" text-anchor="middle">${gw}</text>
       </g>
     `;
   }).join("");
@@ -318,9 +282,9 @@ function buildTrendChart(trend) {
 
     return `
       <g>
-        <path d="${path}" fill="none" stroke="${manager.color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
-        ${points.map((point) => `<circle cx="${point.x}" cy="${point.y}" r="3" fill="${manager.color}" />`).join("")}
-        <text x="${last.x + 8}" y="${last.y + 4}" fill="${manager.color}" font-size="11" font-weight="700">${escapeHtml(manager.playerName)}</text>
+        <path d="${path}" fill="none" stroke="${manager.color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+        ${points.map((point) => `<circle cx="${point.x}" cy="${point.y}" r="2.6" fill="${manager.color}" />`).join("")}
+        <text x="${last.x + 6}" y="${last.y + 4}" fill="${manager.color}" font-size="10" font-weight="700">${escapeHtml(manager.playerName)}</text>
       </g>
     `;
   }).join("");
@@ -330,7 +294,7 @@ function buildTrendChart(trend) {
       <div class="trend-head dark">
         <div>
           <div class="title trend-title">개인별 순위 변화</div>
-          <div class="small trend-subtitle">GW1부터 현재 GW까지 누적점수 기준 리그 등수 변화입니다. 차트는 모바일 가독성을 위해 상위 ${Math.min(MAX_CHART_SERIES, trend.managers.length)}팀을 표시합니다.</div>
+          <div class="small trend-subtitle">GW1부터 현재 GW까지 누적점수 기준 리그 등수 변화입니다. 전체 인원을 기본으로 보여주며, 아래에서 원하는 매니저만 선택할 수 있습니다.</div>
         </div>
       </div>
       <div class="chart-wrap dark">
@@ -344,12 +308,49 @@ function buildTrendChart(trend) {
   `;
 }
 
+function renderManagerSelector(allManagers, selectedEntries) {
+  return `
+    <section class="selector-shell">
+      <div class="section-header compact">
+        <div>
+          <div class="title section-title">표시할 매니저 선택</div>
+          <div class="small muted">전체 보기 상태에서 특정 매니저만 남겨서 추이를 확인할 수 있습니다.</div>
+        </div>
+        <div class="selector-actions">
+          <button type="button" class="mini-button" data-select-all="1">전체 선택</button>
+          <button type="button" class="mini-button" data-clear-all="1">전체 해제</button>
+        </div>
+      </div>
+      <div class="selector-grid">
+        ${allManagers.map((manager) => `
+          <label class="selector-chip ${selectedEntries.includes(manager.entry) ? 'active' : ''}">
+            <input type="checkbox" data-entry-toggle="${manager.entry}" ${selectedEntries.includes(manager.entry) ? 'checked' : ''}>
+            <span class="selector-color" style="background:${manager.color}"></span>
+            <span class="selector-copy">
+              <span class="selector-team">${escapeHtml(manager.entryName)}</span>
+              <span class="selector-manager">${escapeHtml(manager.playerName)}</span>
+            </span>
+          </label>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderTrendSection(managers, gameweeks) {
   const trend = buildSeasonTrend(managers, gameweeks);
   const insights = getKeyInsights(trend.managers);
 
+  if (!state.selectedEntries.length) {
+    state.selectedEntries = trend.managers.map((manager) => manager.entry);
+  }
+
+  const selectedManagers = trend.managers.filter((manager) => state.selectedEntries.includes(manager.entry));
+  const chartManagers = selectedManagers.length ? selectedManagers : trend.managers;
+
   return `
-    ${buildTrendChart(trend)}
+    ${buildTrendChart(trend, chartManagers)}
+    ${renderManagerSelector(trend.managers, state.selectedEntries)}
     <section class="insight-grid">
       ${insights.map((item) => `
         <article class="insight-card ${item.tone}">
@@ -359,7 +360,6 @@ function renderTrendSection(managers, gameweeks) {
         </article>
       `).join("")}
     </section>
-    ${renderRankMatrix(trend)}
     ${renderLeagueStatsSection(trend.managers, trend.gameweeks)}
   `;
 }
@@ -392,6 +392,32 @@ function renderDashboard() {
       </section>
     </div>
   `;
+
+  bindDashboardEvents();
+}
+
+function bindDashboardEvents() {
+  document.querySelectorAll("input[data-entry-toggle]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const entry = Number(input.dataset.entryToggle);
+      if (input.checked) {
+        state.selectedEntries = Array.from(new Set([...state.selectedEntries, entry]));
+      } else {
+        state.selectedEntries = state.selectedEntries.filter((value) => value !== entry);
+      }
+      renderDashboard();
+    });
+  });
+
+  document.querySelector("button[data-select-all='1']")?.addEventListener("click", () => {
+    state.selectedEntries = (state.data?.managers || []).map((manager) => manager.entry);
+    renderDashboard();
+  });
+
+  document.querySelector("button[data-clear-all='1']")?.addEventListener("click", () => {
+    state.selectedEntries = [];
+    renderDashboard();
+  });
 }
 
 function render() {
@@ -420,6 +446,9 @@ async function loadDashboard() {
       throw new Error(payload.error || "Failed to load dashboard");
     }
     state.data = payload;
+    if (!state.selectedEntries.length) {
+      state.selectedEntries = (payload.managers || []).map((manager) => manager.entry);
+    }
   } catch (error) {
     state.error = error.message || "Unknown error";
   } finally {

@@ -1,7 +1,6 @@
 ﻿const state = {
   leagueId: getLeagueIdFromPath(),
   loading: true,
-  refreshing: false,
   error: "",
   data: null,
   selectedEntries: []
@@ -290,7 +289,7 @@ function buildTrendChart(trend, selectedManagers) {
       <div class="trend-head dark">
         <div>
           <div class="title trend-title">개인별 순위 변화</div>
-          <div class="small trend-subtitle">GW1부터 현재 GW까지 누적점수 기준 리그 등수 변화입니다. 전체 인원을 기본으로 보여주며, 아래에서 원하는 매니저만 선택할 수 있습니다.</div>
+          <div class="small trend-subtitle">GW1부터 현재 GW까지 누적점수 기준 리그 등수 변화입니다. 페이지에 접속하면 최신값으로 다시 계산합니다.</div>
         </div>
       </div>
       <div class="chart-wrap dark">
@@ -362,18 +361,15 @@ function renderDashboard() {
           <div class="title">${escapeHtml(data.league?.name || `League ${state.leagueId}`)}</div>
           <div class="subtitle">${data.currentEvent ? `Gameweek ${data.currentEvent.id} live dashboard` : "Season dashboard"}</div>
         </div>
-        <div class="header-actions">
-          <div class="soft-panel notice">
-            <div class="small muted">Stored snapshot</div>
-            <div class="tiny notice-accent">Saved ${escapeHtml(formatLocalTime(data.savedAt || data.refreshedAt))}</div>
-            <div class="tiny muted">Age ${escapeHtml(formatAge(data.snapshotAgeMs || 0))}</div>
-          </div>
-          <button id="refresh-button" class="refresh-button" type="button">${state.refreshing ? 'Refreshing...' : 'Refresh'}</button>
+        <div class="soft-panel notice">
+          <div class="small muted">Stored snapshot</div>
+          <div class="tiny notice-accent">Saved ${escapeHtml(formatLocalTime(data.savedAt || data.refreshedAt))}</div>
+          <div class="tiny muted">Age ${escapeHtml(formatAge(data.snapshotAgeMs || 0))}</div>
         </div>
       </header>
 
       ${data.warning ? `<div class="panel status" style="margin-bottom:14px;">${escapeHtml(data.warning)}</div>` : ""}
-      ${data.stale ? `<div class="panel status" style="margin-bottom:14px;">저장된 스냅샷을 먼저 보여주고 있습니다. 원하면 상단 Refresh 버튼으로 최신값을 다시 가져오세요.</div>` : ""}
+      ${data.stale ? `<div class="panel status" style="margin-bottom:14px;">저장된 스냅샷을 먼저 보여주고 있습니다.</div>` : ""}
 
       <section class="panel trend-shell">
         ${renderTrendSection(managers, trendGameweeks)}
@@ -405,10 +401,6 @@ function bindDashboardEvents() {
     state.selectedEntries = (state.data?.managers || []).map((manager) => manager.entry);
     renderDashboard();
   });
-
-  document.getElementById("refresh-button")?.addEventListener("click", async () => {
-    await loadDashboard(true);
-  });
 }
 
 function render() {
@@ -427,7 +419,6 @@ function render() {
 
 async function loadDashboard(forceRefresh = false) {
   state.loading = !state.data;
-  state.refreshing = Boolean(forceRefresh && state.data);
   state.error = "";
   render();
 
@@ -445,9 +436,8 @@ async function loadDashboard(forceRefresh = false) {
     state.error = error.message || "Unknown error";
   } finally {
     state.loading = false;
-    state.refreshing = false;
     render();
   }
 }
 
-loadDashboard();
+loadDashboard(true);

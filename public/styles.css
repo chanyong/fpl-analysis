@@ -73,121 +73,6 @@ a { color: inherit; }
 .notice { min-width: 250px; padding: 16px 18px; text-align: right; }
 .notice-accent { margin-top: 6px; color: var(--accent-strong); text-transform: uppercase; letter-spacing: 0.08em; }
 
-.toolbar-panel {
-  padding: 14px;
-  margin-bottom: 14px;
-}
-
-.toolbar-grid {
-  display: grid;
-  grid-template-columns: minmax(220px, 1.25fr) minmax(240px, 1.15fr) minmax(160px, 0.7fr) auto auto;
-  gap: 12px;
-  align-items: end;
-}
-
-.field-block {
-  display: grid;
-  gap: 8px;
-}
-
-.field-label,
-.section-kicker {
-  color: var(--muted);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-}
-
-.toggle-chip {
-  height: 52px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 16px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--paper-strong);
-  white-space: nowrap;
-}
-
-.button-stack {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.pill-input,
-.pill-select,
-.pill-button {
-  width: 100%;
-  min-height: 52px;
-  padding: 14px 18px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--paper-strong);
-  color: var(--text);
-}
-
-.pill-button {
-  width: auto;
-  border-color: rgba(173, 141, 99, 0.35);
-  background: #f1d8aa;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.pill-button.secondary {
-  background: #f6ead1;
-}
-
-.captain-strip {
-  padding: 14px 16px;
-  margin-bottom: 14px;
-}
-
-.captain-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 12px;
-  margin-top: 10px;
-}
-
-.captain-chip {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: 18px;
-  background: rgba(255, 250, 244, 0.96);
-  border: 1px solid rgba(140, 115, 84, 0.1);
-}
-
-.captain-chip.primary {
-  background: linear-gradient(135deg, #fff6e6 0%, #f8e4bd 100%);
-}
-
-.captain-dot {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: rgba(173, 141, 99, 0.14);
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--accent-strong);
-}
-
-.captain-name {
-  font-weight: 800;
-}
-
-.captain-meta {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 2px;
-}
-
 .status,
 .loading-shell {
   padding: 34px;
@@ -235,14 +120,19 @@ a { color: inherit; }
   display: block;
 }
 
-.insight-grid {
+.insight-grid,
+.stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
+}
+
+.insight-grid {
   margin: 16px 0 18px;
 }
 
-.insight-card {
+.insight-card,
+.stat-card {
   border: 1px solid var(--line);
   border-radius: 20px;
   background: var(--paper-strong);
@@ -378,36 +268,74 @@ a { color: inherit; }
   color: var(--muted);
 }
 
+.stats-shell {
+  margin-top: 22px;
+}
+
+.stats-grid {
+  margin-top: 12px;
+}
+
+.stat-title {
+  font-size: 17px;
+  font-weight: 900;
+  margin-bottom: 4px;
+}
+
+.stat-list {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid rgba(140, 115, 84, 0.08);
+}
+
+.stat-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.stat-rank {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(173, 141, 99, 0.12);
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--accent-strong);
+}
+
+.stat-copy {
+  min-width: 0;
+}
+
+.stat-name {
+  font-weight: 800;
+}
+
+.stat-value {
+  font-weight: 900;
+  color: var(--accent-strong);
+  white-space: nowrap;
+}
+
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 .tiny { font-size: 11px; }
 
-@media (max-width: 1080px) {
-  .toolbar-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .button-stack {
-    grid-column: span 2;
-  }
-}
-
 @media (max-width: 720px) {
   .title { font-size: 24px; }
-  .toolbar-grid,
-  .button-stack {
-    grid-template-columns: 1fr;
-  }
-
-  .toggle-chip {
-    justify-content: center;
-  }
-
-  .trend-shell {
-    padding: 14px;
-  }
-
-  .movement-stats {
-    grid-template-columns: 1fr;
-  }
+  .trend-shell { padding: 14px; }
+  .movement-stats { grid-template-columns: 1fr; }
+  .stat-row { grid-template-columns: 24px minmax(0, 1fr); }
+  .stat-value { grid-column: 2; }
 }

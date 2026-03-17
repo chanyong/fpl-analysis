@@ -1,9 +1,5 @@
 ﻿const state = {
   leagueId: getLeagueIdFromPath(),
-  leagueInput: getLeagueIdFromPath(),
-  searchText: "",
-  chipOnly: false,
-  scope: "all",
   loading: true,
   error: "",
   data: null
@@ -12,6 +8,7 @@
 const REFRESH_MS = 60000;
 const RECENT_TREND_COUNT = 8;
 const MAX_CHART_SERIES = 10;
+const STAT_LIMIT = 5;
 const app = document.getElementById("app");
 
 function getLeagueIdFromPath() {
@@ -43,19 +40,6 @@ function formatAge(ms) {
   return `${hours}시간`;
 }
 
-function getScopedManagers(managers) {
-  const searched = managers.filter((manager) => {
-    const haystack = [manager.playerName, manager.entryName, manager.captainName].join(" ").toLowerCase();
-    const matchesSearch = !state.searchText.trim() || haystack.includes(state.searchText.trim().toLowerCase());
-    const matchesChip = !state.chipOnly || manager.chip;
-    return matchesSearch && matchesChip;
-  });
-
-  if (state.scope === "top10") return searched.slice(0, 10);
-  if (state.scope === "top20") return searched.slice(0, 20);
-  return searched;
-}
-
 function buildRecentTrend(managers, gameweeks) {
   const safeGameweeks = Array.isArray(gameweeks) ? gameweeks : [];
   const recentGameweeks = safeGameweeks.slice(-RECENT_TREND_COUNT);
@@ -85,7 +69,8 @@ function buildRecentTrend(managers, gameweeks) {
         bestRank,
         seasonChange: Number.isFinite(seasonFirstRank) && Number.isFinite(seasonLatestRank) ? seasonFirstRank - seasonLatestRank : null,
         recentChange: Number.isFinite(firstRecentRank) && Number.isFinite(latestRecentRank) ? firstRecentRank - latestRecentRank : null,
-        recent
+        recent,
+        trend: filtered
       };
     })
   };
@@ -137,6 +122,128 @@ function getKeyInsights(trendManagers) {
       tone: "neutral"
     }
   ];
+}
+
+function buildLeagueStats(managers, gameweeks) {
+  const firstPlaceCounts = new Map();
+  const secondPlaceCounts = new Map();
+  const cumulativeLeaderCounts = new Map();
+  const weeklyHighScores = [];
+  const weeklyRankJumps = [];
+  const averageEventScores = [];
+
+  managers.forEach((manager) => {
+    averageEventScores.push({
+      entry: manager.entry,
+      entryName: manager.entryName,
+      playerName: manager.playerName,
+      value: Number((manager.trend.reduce((sum, row) => sum + row.eventPoints, 0) / Math.max(manager.trend.length, 1)).toFixed(1))
+    });
+
+    manager.trend.forEach((row, index) => {
+      if (row.rank === 1) {
+        cumulativeLeaderCounts.set(manager.entry, (cumulativeLeaderCounts.get(manager.entry) || 0) + 1);
+        firstPlaceCounts.set(manager.entry, (firstPlaceCounts.get(manager.entry) || 0) + 1);
+      }
+      if (row.rank === 2) {
+        secondPlaceCounts.set(manager.entry, (secondPlaceCounts.get(manager.entry) || 0) + 1);
+      }
+
+      weeklyHighScores.push({
+        entry: manager.entry,
+        entryName: manager.entryName,
+        playerName: manager.playerName,
+        gw: row.gw,
+        value: row.eventPoints
+      });
+
+      if (index > 0) {
+        const previous = manager.trend[index - 1];
+        const change = previous.rank - row.rank;
+        weeklyRankJumps.push({
+          entry: manager.entry,
+          entryName: manager.entryName,
+          playerName: manager.playerName,
+          gw: row.gw,
+          value: change
+        });
+      }
+    });
+  });
+
+  function mapCountRanking(counter) {
+    return managers
+      .map((manager) => ({
+        entry: manager.entry,
+        entryName: manager.entryName,
+        playerName: manager.playerName,
+        value: counter.get(manager.entry) || 0
+      }))
+      .filter((item) => item.value > 0)
+      .sort((a, b) => b.value - a.value || a.entryName.localeCompare(b.entryName))
+      .slice(0, STAT_LIMIT);
+  }
+
+  return {
+    firstPlaceTop: mapCountRanking(firstPlaceCounts),
+    secondPlaceTop: mapCountRanking(secondPlaceCounts),
+    cumulativeLeaderTop: mapCountRanking(cumulativeLeaderCounts),
+    weeklyHighScoresTop: weeklyHighScores
+      .sort((a, b) => b.value - a.value || a.gw - b.gw)
+      .slice(0, STAT_LIMIT),
+    averageEventPointsTop: averageEventScores
+      .sort((a, b) => b.value - a.value)
+      .slice(0, STAT_LIMIT),
+    rankJumpTop: weeklyRankJumps
+      .filter((item) => item.value > 0)
+      .sort((a, b) => b.value - a.value || a.gw - b.gw)
+      .slice(0, STAT_LIMIT),
+    trackedGameweeks: gameweeks.length
+  };
+}
+
+function renderStatList(title, subtitle, items, formatter) {
+  return `
+    <article class="stat-card">
+      <div class="stat-title">${escapeHtml(title)}</div>
+      <div class="small muted">${escapeHtml(subtitle)}</div>
+      <div class="stat-list">
+        ${items.length ? items.map((item, index) => `
+          <div class="stat-row">
+            <div class="stat-rank">${index + 1}</div>
+            <div class="stat-copy">
+              <div class="stat-name">${escapeHtml(item.entryName)}</div>
+              <div class="small muted">${escapeHtml(item.playerName)}</div>
+            </div>
+            <div class="stat-value">${formatter(item)}</div>
+          </div>
+        `).join("") : `<div class="small muted">데이터가 없습니다.</div>`}
+      </div>
+    </article>
+  `;
+}
+
+function renderLeagueStatsSection(managers, gameweeks) {
+  const stats = buildLeagueStats(managers, gameweeks);
+
+  return `
+    <section class="stats-shell">
+      <div class="section-header">
+        <div>
+          <div class="title section-title">GW 통계</div>
+          <div class="small muted">GW1부터 현재까지 ${stats.trackedGameweeks}개 게임위크를 기준으로 계산했습니다.</div>
+        </div>
+      </div>
+      <div class="stats-grid">
+        ${renderStatList("개별 GW 1위 최다", "각 GW 종료 시점 1등 횟수 Top 5", stats.firstPlaceTop, (item) => `${item.value}회`)}
+        ${renderStatList("개별 GW 2위 최다", "각 GW 종료 시점 2등 횟수 Top 5", stats.secondPlaceTop, (item) => `${item.value}회`)}
+        ${renderStatList("누적 1위 유지 최다", "누적점수 기준 주차별 1위 횟수 Top 5", stats.cumulativeLeaderTop, (item) => `${item.value}회`)}
+        ${renderStatList("개별 GW 최고득점", "단일 GW 득점 기록 Top 5", stats.weeklyHighScoresTop, (item) => `GW${item.gw} · ${item.value}점`)}
+        ${renderStatList("주간 평균점수", "GW 평균 득점 Top 5", stats.averageEventPointsTop, (item) => `${item.value}점`)}
+        ${renderStatList("최대 순위 점프", "직전 GW 대비 상승폭 Top 5", stats.rankJumpTop, (item) => `GW${item.gw} · +${item.value}`)}
+      </div>
+    </section>
+  `;
 }
 
 function renderMovementCards(trendManagers) {
@@ -276,13 +383,13 @@ function renderTrendSection(managers, gameweeks) {
       </div>
     </section>
     ${renderMovementCards(sortedByMovement)}
+    ${renderLeagueStatsSection(trend.managers, gameweeks)}
   `;
 }
 
 function renderDashboard() {
   const data = state.data;
-  const allManagers = Array.isArray(data.managers) ? data.managers : [];
-  const managers = getScopedManagers(allManagers);
+  const managers = Array.isArray(data.managers) ? data.managers : [];
   const trendGameweeks = Array.isArray(data.trend?.gameweeks) ? data.trend.gameweeks : [];
 
   app.innerHTML = `

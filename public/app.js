@@ -3,7 +3,8 @@
   loading: true,
   error: "",
   data: null,
-  selectedEntries: []
+  selectedEntries: [],
+  selectorInitialized: false
 };
 
 const RECENT_TREND_COUNT = 8;
@@ -37,16 +38,6 @@ function formatAge(ms) {
   if (minutes < 60) return `${minutes}분`;
   const hours = Math.round(minutes / 60);
   return `${hours}시간`;
-}
-
-function formatRankChange(change) {
-  if (!Number.isFinite(change) || change === 0) {
-    return { label: "-", className: "flat", text: "변화 없음" };
-  }
-  if (change > 0) {
-    return { label: `+${change}`, className: "up", text: `${change}계단 상승` };
-  }
-  return { label: `${change}`, className: "down", text: `${Math.abs(change)}계단 하락` };
 }
 
 function buildSeasonTrend(managers, gameweeks) {
@@ -306,19 +297,20 @@ function buildTrendChart(trend, selectedManagers) {
 function renderManagerSelector(allManagers, selectedEntries) {
   return `
     <section class="selector-shell">
-      <div class="section-header compact">
+      <div class="section-header compact selector-header">
         <div>
           <div class="title section-title">표시할 매니저 선택</div>
-          <div class="small muted">전체 보기 상태에서 특정 매니저만 남겨서 추이를 확인할 수 있습니다.</div>
+          <div class="small muted">체크된 매니저만 차트에 표시됩니다.</div>
         </div>
         <div class="selector-actions">
           <button type="button" class="mini-button" data-select-all="1">전체 선택</button>
+          <button type="button" class="mini-button" data-clear-all="1">전체 해제</button>
         </div>
       </div>
       <div class="selector-grid compact">
         ${allManagers.map((manager) => `
-          <label class="selector-chip ${selectedEntries.includes(manager.entry) ? 'active' : ''}">
-            <input type="checkbox" data-entry-toggle="${manager.entry}" ${selectedEntries.includes(manager.entry) ? 'checked' : ''}>
+          <label class="selector-chip ${selectedEntries.includes(manager.entry) ? "active" : ""}">
+            <input type="checkbox" data-entry-toggle="${manager.entry}" ${selectedEntries.includes(manager.entry) ? "checked" : ""}>
             <span class="selector-color" style="background:${manager.color}"></span>
             <span class="selector-copy">
               <span class="selector-team">${escapeHtml(manager.entryName)}</span>
@@ -333,16 +325,24 @@ function renderManagerSelector(allManagers, selectedEntries) {
 
 function renderTrendSection(managers, gameweeks) {
   const trend = buildSeasonTrend(managers, gameweeks);
-
-  if (!state.selectedEntries.length) {
-    state.selectedEntries = trend.managers.map((manager) => manager.entry);
-  }
-
   const selectedManagers = trend.managers.filter((manager) => state.selectedEntries.includes(manager.entry));
-  const chartManagers = selectedManagers.length ? selectedManagers : trend.managers;
+
+  const chartHtml = selectedManagers.length
+    ? buildTrendChart(trend, selectedManagers)
+    : `
+      <section class="trend-chart-panel">
+        <div class="trend-head dark">
+          <div>
+            <div class="title trend-title">개인별 순위 변화</div>
+            <div class="small trend-subtitle">GW1부터 현재 GW까지 누적점수 기준 리그 등수 변화입니다. 페이지에 접속하면 최신값으로 다시 계산합니다.</div>
+          </div>
+        </div>
+        <div class="chart-empty-state">표시할 매니저를 하나 이상 선택해 주세요.</div>
+      </section>
+    `;
 
   return `
-    ${buildTrendChart(trend, chartManagers)}
+    ${chartHtml}
     ${renderManagerSelector(trend.managers, state.selectedEntries)}
     ${renderLeagueStatsSection(trend.managers, trend.gameweeks)}
   `;
@@ -387,10 +387,6 @@ function bindDashboardEvents() {
       if (input.checked) {
         state.selectedEntries = Array.from(new Set([...state.selectedEntries, entry]));
       } else {
-        if (state.selectedEntries.length === 1) {
-          input.checked = true;
-          return;
-        }
         state.selectedEntries = state.selectedEntries.filter((value) => value !== entry);
       }
       renderDashboard();
@@ -399,6 +395,11 @@ function bindDashboardEvents() {
 
   document.querySelector("button[data-select-all='1']")?.addEventListener("click", () => {
     state.selectedEntries = (state.data?.managers || []).map((manager) => manager.entry);
+    renderDashboard();
+  });
+
+  document.querySelector("button[data-clear-all='1']")?.addEventListener("click", () => {
+    state.selectedEntries = [];
     renderDashboard();
   });
 }
@@ -423,14 +424,15 @@ async function loadDashboard(forceRefresh = false) {
   render();
 
   try {
-    const response = await fetch(`/api/league/${state.leagueId}${forceRefresh ? '?refresh=1' : ''}`);
+    const response = await fetch(`/api/league/${state.leagueId}${forceRefresh ? "?refresh=1" : ""}`);
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.error || "Failed to load dashboard");
     }
     state.data = payload;
-    if (!state.selectedEntries.length) {
+    if (!state.selectorInitialized) {
       state.selectedEntries = (payload.managers || []).map((manager) => manager.entry);
+      state.selectorInitialized = true;
     }
   } catch (error) {
     state.error = error.message || "Unknown error";
